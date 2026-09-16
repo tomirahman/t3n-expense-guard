@@ -100,7 +100,7 @@ cargo build --target wasm32-wasip2 --release      # -> target/wasm32-wasip2/rele
 
 ```bash
 cd client
-cp .env.example .env && $EDITOR .env              # three keys + webhook URL
+cp .env.example .env && $EDITOR .env              # TENANT_API_KEY, AGENT_INVOKE_KEY, TENANT_DID, PII_DID
 npm install
 npm run doctor                                    # 21 preflight checks: env, SDK, wasm, hosts, PII_DID
 npm run register                                  # tenant: upload the wasm, create the 4 maps + ACLs,
