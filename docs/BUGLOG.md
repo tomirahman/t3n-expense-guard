@@ -249,39 +249,60 @@ stack traces without exposing anything the obfuscator was hiding from a
 casual reader — `dist/index.d.ts` (308 KB) already documents the whole public
 API surface.
 
-## BUG-11 — a contract has two identifiers, only one is documented, and only one is derivable
+## BUG-11 — the numeric `contract_id` map ACLs require cannot be read back, and the SDK's example for the grant's target matches nothing
 
-The platform identifies a contract by a **canonical name** and by a **numeric
-id**, and different call sites require different ones. The shipped type
-declarations make this explicit; the prose docs never mention it:
+Two different identifiers point at the same contract, and the split is
+documented — but only one half of it is:
 
-```ts
-// dist/index.d.ts:6384 — map ACLs
-type WriterSet = "all" | { only: number[] };
-type ReaderSet = "all" | { only: number[] };
+- **Map ACLs take the numeric id.** `type WriterSet = "all" | { only: number[] }`
+  (`dist/index.d.ts:6384`), and `register-contract.md:7` says registration
+  "gives you a numeric `contract_id` that you use when creating map ACLs".
+- **Grants and `delegation.check` take the canonical name.**
+  `DelegationGrantRef.contract` is documented as "The target contract's
+  canonical name" (`dist/index.d.ts:2892`) and the walkthrough passes
+  `z:<tid>:<tail>` (`invoke-contract.md:94`).
+
+The gap is that the numeric id is **write-only**. `ListedContract`
+(`dist/index.d.ts:2846-2864`) exposes `name`, `short_name`, `kind`, `version`,
+`summary`, `tags` and `owner_org_did` — and no `contract_id`. `contracts.list`
+is therefore not a way to recover the id, and `register-contract.md:83` confirms
+it: "there is currently no API to fetch a tail's current `contract_id` after
+re-registering". The docs' mitigation is procedural — keep your own record — but
+the node already hands you the id at registration, so it plainly has it.
+
+The failure is quiet and misattributed. Re-register the same tail, keep the old
+ACLs, and the contract's own `kv-store` call is denied *inside the enclave* —
+`AccessDenied` is the documented symptom of an ACL miss (`create-kv-maps.md:18`):
+
+```
+AccessDenied
 ```
 
+Nothing in that error points at the client's bookkeeping, so the natural next
+step is to debug the contract, its WIT imports and its ACL entry — all three of
+which are correct. The stale id is the only wrong thing in the picture.
+
+Separately, the one example the SDK ships for the grant's target is a form that
+cannot be produced by any documented step:
+
 ```ts
-// dist/index.d.ts:1215 — delegation grants
+// dist/index.d.ts:1215 — the delegation grant's target
 /** Target contract id (canonical name, e.g. `"tee:z-payroll/contracts"`), or `"*"`. */
 contract_id: string;
 ```
 
-Meanwhile the KV-map tip writes `writers: { only: [contractId] }` without saying
-which of the two `contractId` means, and the registration walkthrough presents
-`z:<tenant>:<tail>` as *the* contract id. The numeric id is **not derivable**
-from the canonical name: it only ever appears in the registration response. A
-builder who follows the docs in order has to guess at step two, and guessing
-wrong produces a map whose ACL names a contract that does not exist — the
-contract's own KV write is then denied, from inside the enclave, with no hint
-that the cause was a type confusion in the client.
+Core contracts are `tee:<name>` (`dist/index.d.ts:2847`) — the system contract in
+the walkthrough is `tee:user/contracts` — and a tenant contract with tail
+`payroll` is `z:<tid>:payroll`. `tee:z-payroll/contracts` is none of those, and a
+builder who trusts the type comment over the walkthrough writes a grant aimed at
+a contract that does not exist; `delegation.check` reports no coverage and the
+denial only appears at invoke time.
 
-**Fix:** document the split in one place ("the numeric id is what ACLs take, the
-canonical name is what grants and `contract_id` arguments take"), or accept the
-canonical name everywhere and resolve it host-side. The two identifiers also
-appear as `contract_id` in the activity log, where the only example given —
-`tee:user/contracts` — is a third, system-namespace form that appears nowhere in
-the registration flow.
+**Fix:** add `contract_id` to `ListedContract` (one field, the node already has
+it), and correct the JSDoc example. If the two-identifier split is deliberate,
+say so in one sentence next to `WriterSet` — the type declarations are the most
+authoritative thing a builder has, and right now they are the only place the
+question gets answered at all.
 
 ## BUG-12 — `--initial-credits` fails on a fresh organisation with `available=0`, and names no source
 
@@ -328,9 +349,9 @@ see `docs/RUNBOOK.md`.)_
 1. **BUG-09** — blocks the documented first command.
 2. **BUG-01** — blocks the documented first paste.
 3. **BUG-02** — silent path to a non-loadable component.
-4. **BUG-11** — the split between the two contract identifiers is unresolvable
-   from the docs, and getting it wrong fails *inside* the enclave as an unrelated
-   `AccessDenied`, so the builder debugs the wrong layer.
+4. **BUG-11** — the numeric id that map ACLs need cannot be read back, so
+   re-registering a tail silently orphans every ACL that used the old id, and the
+   symptom (`AccessDenied`) points the builder at the wrong layer.
 5. **BUG-03** — costs the platform its differentiator: builders cannot discover
    `scan` or `set-claims-digest`, so nobody ships offline-verifiable receipts.
 6. **BUG-10** — the client that talks to the enclave is published obfuscated,

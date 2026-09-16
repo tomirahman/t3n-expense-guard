@@ -10,3 +10,7 @@ reference/
 
 # Throwaway connectivity/scratch probes — never published.
 client/_probe*.ts
+
+# Machine-local records passed between harness steps (never secrets, but they
+# name ids that only exist in one tenant's namespace).
+client/artifacts/

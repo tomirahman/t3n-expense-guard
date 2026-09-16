@@ -11,7 +11,7 @@
  *
  *   npm run doctor && npm run register
  */
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -32,7 +32,7 @@ import {
   type Identity,
 } from "./lib/env.js";
 import { CONTRACT_FUNCTIONS, MAP_TAIL, canonicalName } from "./lib/interface.js";
-import { REGISTRATION_FILE, readRegistration } from "./lib/artifacts.js";
+import { readRegistration } from "./lib/artifacts.js";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -120,16 +120,15 @@ await check("node version", () => {
 await check("package layout", async () => {
   const pkg = await readJsonObject(path.join(CLIENT_ROOT, "package.json"));
   if (pkg["type"] !== "module") throw new Error('client/package.json must declare "type": "module"');
-  const deps = pkg["dependencies"];
-  if (typeof deps !== "object" || deps === null) throw new Error("client/package.json has no dependencies");
-  const pinned = { ...deps }["@terminal3/t3n-sdk"];
+  const deps = nestedObject(pkg, "dependencies");
+  const pinned = deps["@terminal3/t3n-sdk"];
   if (typeof pinned !== "string") throw new Error("client/package.json does not pin @terminal3/t3n-sdk");
   return `ESM ("type": "module"), @terminal3/t3n-sdk pinned to ${pinned}`;
 });
 
 await softCheck("sdk version", async () => {
   const pkg = await readJsonObject(path.join(CLIENT_ROOT, "package.json"));
-  const deps = { ...(pkg["dependencies"] as Record<string, unknown>) };
+  const deps = nestedObject(pkg, "dependencies");
   const pinned = deps["@terminal3/t3n-sdk"];
 
   const installedPath = path.join(CLIENT_ROOT, "node_modules", "@terminal3", "t3n-sdk", "package.json");
@@ -234,7 +233,17 @@ await check("delegation scopes", () => {
 
 await softCheck("registration record", async () => {
   const record = await readRegistration();
-  return `I could not read ${record.name}`;
+  // The record also pins the exact bytes that were registered, so a rebuilt
+  // component that was never re-registered shows up here instead of as a
+  // confusing mismatch at invoke time.
+  const built = await stat(WASM_ARTIFACT);
+  if (built.size !== record.wasm.bytes) {
+    throw new Error(
+      `${WASM_ARTIFACT} is ${built.size} bytes but ${record.name} was registered from ` +
+        `${record.wasm.bytes} — rebuild and re-run \`npm run register\` if the contract changed`,
+    );
+  }
+  return `${record.name} @ ${record.version} → contract_id ${record.contract_id}`;
 });
 
 await softCheck("node reachability", async () => {
