@@ -17,9 +17,9 @@ The contract (`contract/`, Rust → `z_expense_guard.wasm`) exports six function
 | Function | What it does |
 | --- | --- |
 | `health` | liveness + the enclave's view of the contract identity |
-| `set-policy` / `get-policy` | the rulebook: base currency, approval threshold, per-category limits, weekday restriction |
+| `set-policy` / `get-policy` | the rulebook: base currency, approval threshold, default and per-category limits, duplicate window, FX cache TTL |
 | `check-expense` | evaluates one expense against the policy and returns a verdict with the rule ids that fired |
-| `request-approval` | posts the flagged expense to the configured webhook — through the host's HTTP egress, with `{{profile.*}}` placeholders resolved *inside* the enclave so PII never enters contract memory |
+| `request-approval` | posts the flagged expense to the configured webhook — through the host's HTTP egress, with `{{profile.*}}` placeholders resolved *inside* the enclave so PII never enters contract memory. Covered by 15 unit tests; not part of the committed demo transcript |
 | `get-audit` | the append-only ledger inside the TEE |
 
 Five T3N host capabilities carry the weight, and each one is load-bearing rather than decorative:
@@ -58,7 +58,8 @@ outside.
 | wasm | 255,734 bytes, sha256 `5dd3a964bc2e0b3f…` |
 | component validation | `wasm-tools validate` OK; import set identical to the vendor sample |
 | native tests | 115 unit tests + 1 doctest, green |
-| live demo | 8 of 8 steps green on four consecutive runs, one of them via the documented `npm run demo` — health, delegation, policy, FX-converted verdict, duplicate, threshold, rejection, ledger read-back |
+| reproducibility | rebuilding the contract from this source reproduces the deployed artifact byte-for-byte: 255,734 B, sha256 `5dd3a964bc2e0b3f…` |
+| live demo | 8 of 8 steps green on four consecutive runs, produced by the documented `npm run demo` — health, delegation, policy, FX-converted verdict, duplicate, threshold, rejection, ledger read-back |
 | outbound HTTP from the enclave | real: `fx_source: open.er-api.com`, `fx_rate: 1.153788` for a EUR claim |
 | tenant DID | `did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9` |
 | org / agent DID | `did:t3n:85c188ff697c5c7aae96b495bdc8c087dcdae4c9` / `did:t3n:a13591f52ba98b9068801c80719e56d03c74ee81` |
@@ -73,11 +74,51 @@ outside.
 
 ![demo — 8 of 8 steps green](evidence/demo.png)
 
+The actual decisions from that run — which rule fired, what the verdict was, what
+the converted amount was — are quoted verbatim in
+`evidence/decision-samples.md`, and the whole session is replayable from the
+committed transcripts in `client/demo-output/`.
+
 **The demo transcript is the evidence**: `client/demo-output/<TIMESTAMP>-invoke.json` is the raw output of `npm run demo` — a real agent session, against the registered contract, on testnet. Every step records what was asked, what came back, and how it was classified.
 
 ## What we found while building it
 
 `docs/BUGLOG.md` documents 15 defects we hit and reproduced, each with the file and line, a verbatim error, and a proposed fix. The one that cost us the most is also the cheapest to fix: an agent call that names no acting identity is resolved as a **self** call, so the enclave looks for the contract's egress grant on the agent's own document, finds nothing, and denies the contract's outbound HTTP with `host/http.egress_denied ... not in the resolved allowlist []` — while the correct grant sits on the delegator's document, echoed back intact by `member-delegation-get`. Every signal said the write had worked, and the one API that exists to name the missing edge, `discoverCheckDelegation`, returned `authorised: false` with an empty `missing` list. A second one belongs in the same report: the SDK's declared grant row (`function: string`, with a comment describing the multi-function form as retired) is rejected by the node outright, which accepts `functions: [...]` — the shape the docs use. The others range from a duplicate import that stops the documented first paste from compiling, through a `.cargo/config.toml` that makes the vendor sample's own `cargo test` fail, four host-ABI capabilities (`kv-store.scan`, `set-claims-digest`, `token.get-balance`, `seq-no`) that exist in the vendored WIT and in none of the 48 published docs, an SDK shipped obfuscated with no source maps while the source repository is private, a `contract_id` split whose numeric half cannot be read back after a re-registration, to a CLI that cannot read an agent's balance because it only accepts private keys.
+
+## Current limitations
+
+Stated plainly, because a compliance deployment is judged on its weak edges:
+
+- The audit ledger is **append-only and sequence-numbered inside the TEE**, not
+  independently cryptographically verifiable: there is no per-record signature or
+  receipt a third party could check without trusting the operator's attestation.
+- **One policy per tenant.** The policy map holds one `current` rulebook;
+  per-department policy sets would need a keying change.
+- **Sequence allocation is read-then-increment.** KV exposes no atomic
+  compare-and-set through the host interface, so concurrent writers could collide.
+  Acceptable for a serial approval workflow, not for a high-throughput ledger.
+- **External dependencies are trusted at runtime.** Approval delivery depends on
+  the configured webhook, FX on `open.er-api.com`; both degrade explicitly
+  (`status: "failed"`, `fx_unavailable`) instead of silently. `request-approval`
+  itself is unit-tested but not exercised end to end in the committed demo, so
+  the webhook dispatch path has never run against a real endpoint here.
+- **The client checks reachability, not attestation.** Nothing refuses to run
+  against an unexpected enclave measurement yet.
+- **The agent holds a bearer token, not a key pair**, so it cannot prove key
+  possession to a third party; its authority is the delegation document plus the
+  host's resolution of it.
+
+## How this maps to the judging criteria
+
+| Criterion | Where to look |
+| --- | --- |
+| Usefulness | "The problem it solves" above; the policy/ledger confidentiality argument in `README.md` |
+| Build quality | "What actually runs" + "The authority model"; `docs/ARCHITECTURE.md`; 115 native tests |
+| Ease of maintenance | `docs/HANDOVER.md`, `docs/RUNBOOK.md`, the six documented npm commands, deterministic decisions, `AGENTS.md` |
+| Documentation quality | `README.md` (overview), `docs/INTERFACE.md` (frozen interface), `docs/ARCHITECTURE.md` (threat model), `docs/BUGLOG.md` (defects) |
+| Demo / evidence | "Deployed and verified" + "Screenshots"; `client/demo-output/` transcripts; `docs/evidence/` |
+| Bug findings | "What we found while building it" + `docs/BUGLOG.md` (15 entries, categorised and prioritised) |
+| Handover | "Running it after the challenge" + `docs/HANDOVER.md`, including the two traps |
 
 ## Reproducing it
 

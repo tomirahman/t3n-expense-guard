@@ -56,7 +56,7 @@ interface contracts {
 
     /// Evaluate one expense claim against policy: category limits, approval
     /// threshold, duplicate detection and FX conversion to the base currency.
-    /// Writes a tamper-evident record to the audit ledger.
+    /// Writes an append-only record to the audit ledger.
     /// Input  (JSON): { expense_id, employee_ref, amount, currency, category,
     ///                  vendor, incurred_on }
     /// Output (JSON): { expense_id, verdict, base_currency, base_amount, fx_rate,

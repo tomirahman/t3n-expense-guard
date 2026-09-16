@@ -27,7 +27,7 @@ once: `format!("z:{}:{}", hex::encode(tid), tail)`.
 | map | keys | written by |
 |---|---|---|
 | `z:<tid>:policy` | `current` | `set-policy` |
-| `z:<tid>:audit` | `seq:<000001>` (immutable record), `exp:<expense_id>` (pointer) | `check-expense`, `request-approval` |
+| `z:<tid>:audit` | `seq:<000001>` (write-once record), `exp:<expense_id>` (pointer) | `check-expense`, `request-approval` |
 | `z:<tid>:fx` | `<FROM>:<TO>` → `{ rate, fetched_at }` | `check-expense` (cache) |
 | `z:<tid>:secrets` | `approval_webhook_url` | seeded by the tenant SDK (read-only for the contract) |
 

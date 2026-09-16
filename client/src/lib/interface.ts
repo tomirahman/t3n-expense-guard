@@ -33,7 +33,7 @@ export type ContractFunction = (typeof CONTRACT_FUNCTIONS)[number];
  * Key layout, for reference — the harness never writes these directly, the
  * contract does through its `kv-store` import:
  *   policy  — `current`
- *   audit   — `seq:<000001>` (immutable record) and `exp:<expense_id>` (pointer)
+ *   audit   — `seq:<000001>` (write-once record) and `exp:<expense_id>` (pointer)
  *   fx      — `<FROM>:<TO>`
  *   secrets — `approval_webhook_url` (below)
  */
@@ -158,7 +158,7 @@ export interface RequestApprovalResult {
   ledger_seq: number;
 }
 
-/** One immutable audit-ledger record. */
+/** One write-once audit-ledger record. */
 export interface AuditRecord {
   seq: number;
   expense_id: string;

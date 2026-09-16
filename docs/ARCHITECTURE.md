@@ -90,10 +90,19 @@ about to write, and posts the merged document back.
 
 ## Ledger design
 
-Records are keyed `seq:<6-digit>` and never rewritten; `exp:<expense_id>` points
-at the latest record for a claim so a single claim can be traced across
-`check-expense` and `request-approval`. Sequence numbers are derived by reading
-the highest existing key and incrementing.
+Records are keyed `seq:<6-digit>` and written once; nothing rewrites a sequence
+row. `exp:<expense_id>` points at the latest record for a claim so a single claim
+can be traced across `check-expense` and `request-approval`. Sequence numbers are
+derived by reading the highest existing key and incrementing.
+
+What the ledger does **not** provide: any integrity proof a third party could
+check without trusting the operator. There is no per-record signature, no Merkle
+path and no receipt binding an expense, the policy version and the verdict into
+something verifiable offline; the records are plain JSON written inside the
+enclave. The audit record is therefore described everywhere as an *append-only,
+sequence-numbered ledger* and never as cryptographically tamper-evident. A signed
+decision receipt is listed as the first production follow-up in
+`docs/HANDOVER.md`.
 
 Limitations, stated honestly: KV has no atomic compare-and-set exposed through
 the host interface, so two concurrent writers could in principle pick the same

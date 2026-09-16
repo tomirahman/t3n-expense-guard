@@ -20,6 +20,41 @@ There is no hosted service, no private registry and no external config store. Th
 contract is a wasm artifact; the client is a TypeScript project; the credentials
 are three T3N keys.
 
+## Configuration a new operator must supply
+
+| variable | what it is | where it comes from |
+| --- | --- | --- |
+| `TENANT_API_KEY` | tenant private key — registers the contract, creates the four maps, seeds the policy | the tenant account |
+| `TENANT_DID` | the tenant's DID; in this deployment it is also the delegator | `t3n` account output |
+| `AGENT_INVOKE_KEY` | the agent's bearer token, `t3n_key_<id>.<secret>`, sent as `X-T3N-Api-Key` | printed exactly once by `t3n agent create` |
+| `AGENT_KEY_ID`, `AGENT_DID`, `ORG_DID` | identity of the agent and the org it belongs to | `t3n agent create`, `t3n org create` |
+| `PII_DID` | the identity a delegated call acts *for* — must name the delegator | same value as `TENANT_DID` here |
+| `T3N_ENVIRONMENT`, `CONTRACT_TAIL`, `CONTRACT_VERSION` | cluster and registration identity | your choice; the version must increase on every re-registration |
+| `APPROVAL_WEBHOOK_URL` | webhook the contract posts approvals to; its hostname also enters the grant | an endpoint you control |
+| `FX_BASE_CURRENCY` | reporting currency, also the policy's `base_currency` | defaults to USD when unset |
+
+`client/.env.example` documents every variable, including the ones a normal
+deployment should leave unset. **Secrets are supplied by the operator and never
+committed**: `.env` is git-ignored (`.gitignore:3`), and the repository contains no
+key, token or credential — only placeholders such as `<tenant-private-key-0x...>`.
+
+## Troubleshooting and continuing development
+
+- Failure modes we actually hit, with symptoms and fixes: `docs/RUNBOOK.md`
+  §"Failure modes we actually hit".
+- Platform defects, each with file:line and a proposed upstream fix:
+  `docs/BUGLOG.md`.
+- Before changing anything: `cargo test` in `contract/` (115 unit tests + 1
+  doctest), then `npm run typecheck` and `npm run verify` in `client/`. Decisions
+  are deterministic, so a behavioural change shows up as a different verdict or
+  rule id in `npm run demo` rather than as a prompt-tuning question.
+- `AGENTS.md` (mirrored to `CLAUDE.md`) is the repository contract for whoever
+  picks this up next: commands, conventions, boundaries and the never-touch list.
+  Keep it in step with code changes.
+- Evidence tooling: `tools/terminal-to-png.py` turns a `script(1)` capture into a
+  screenshot; `tools/build-submission-docx.py` rebuilds the submission document.
+  Both exist so evidence is generated, not hand-written.
+
 ## Option A — we keep running it
 
 The tenant org, the agent and the registration stay ours. Operating cost is

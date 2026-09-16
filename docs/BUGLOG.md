@@ -8,6 +8,34 @@ observed result, the impact on a first-time builder, and a suggested fix.
 These are developer-experience and documentation defects — not security
 vulnerabilities. We found no vulnerability in the ADK while building.
 
+## At a glance
+
+Categories: **DOC** = documentation defect (the published text is wrong, stale or
+unreachable), **DX** = developer experience (the published tooling or packaging
+fights the documented workflow), **INT** = integration (two shipped surfaces
+disagree with each other, so correct-looking code cannot work).
+None of the fifteen is a security vulnerability, and none is filed as one.
+
+| id | category | one line | cost on a first build |
+| --- | --- | --- | --- |
+| BUG-01 | DOC | the published `invoke-contract` sample does not compile (duplicate import) | blocks the first paste |
+| BUG-02 | DOC | the vendored ABI version in the docs contradicts the reference repo | wrong dependency line |
+| BUG-03 | DOC | four shipped host capabilities are absent from all published docs | undiscoverable features |
+| BUG-04 | DOC | the OpenAPI spec the docs cite is not retrievable | dead link in the main reference |
+| BUG-05 | DOC | the quickstart pins an SDK 15 minor versions behind | stale setup |
+| BUG-06 | DOC | two names for one delegation mechanism | wrong API searched for |
+| BUG-07 | INT | the credit failure name differs between the SDK and the ABI | unhandled error class |
+| BUG-08 | DX | `host-outbox-1.0.0` is vendored but never used and never documented | dead weight |
+| BUG-09 | DX | `cargo test` as documented cannot run in the reference repo (target pinned in `.cargo/config.toml`) | test suite looks broken |
+| BUG-10 | DX | the SDK ships obfuscated with no source maps while the source repo is private | debugging platform code is guesswork |
+| BUG-11 | INT | the numeric `contract_id` that map ACLs require cannot be read back | unrecoverable value after re-registration |
+| BUG-12 | DX | `--initial-credits` fails on a fresh organisation with `available=0` | first provisioning step fails |
+| BUG-13 | DX | the CLI cannot read an agent's balance, only a private key's | cannot debug credit failures |
+| BUG-14 | INT | a call that omits `pii_did` is resolved as a self call and denied with an empty allowlist | hours lost; the failing edge is invisible |
+| BUG-15 | INT | the SDK's declared grant row (`function`) is rejected by the node, which accepts `functions` | correct-looking grant cannot be written |
+
+Reproduction steps, verbatim errors and proposed fixes follow per entry.
+
 Artifacts referenced:
 
 - `docs` = `docs.terminal3.io` mirror (49 pages, `developers/adk/**` and `t3n/**`)

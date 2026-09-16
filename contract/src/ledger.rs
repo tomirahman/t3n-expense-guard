@@ -2,7 +2,7 @@
 //!
 //! Layout (`docs/INTERFACE.md` §"Maps"):
 //!
-//! * `seq:<000001>` → the JSON audit record (append-only, immutable);
+//! * `seq:<000001>` → the JSON audit record (append-only, write-once);
 //! * `exp:<expense_id>` → a pointer/index entry for that expense.
 //!
 //! The **record** shape is frozen. The **pointer** value is not specified by
@@ -40,7 +40,7 @@ pub const MAX_READ_LIMIT: usize = 200;
 /// Largest sequence representable with six digits of zero padding.
 pub const MAX_SEQ: u64 = 999_999;
 
-/// One immutable audit record. Field order is the frozen wire order.
+/// One write-once audit record. Field order is the frozen wire order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AuditRecord {
     pub seq: u64,
