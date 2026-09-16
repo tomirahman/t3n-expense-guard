@@ -25,10 +25,11 @@ wasm-tools component wit target/wasm32-wasip2/release/z_expense_guard.wasm   # i
 cd client
 npm ci
 cp .env.example .env && chmod 600 .env            # then fill in the credentials
-npm run doctor                                    # 19 preflight checks; stops at the first failure
-npm run register                                  # tenant: register, create maps, seed policy
-npm run delegate                                  # data owner: grant the agent its scope
-npm run demo                                      # agent: the expense flow + transcript
+npm run doctor                                    # 21 preflight checks; stops at the first failure
+npm run register                                  # tenant: register, create maps, seed policy + secrets
+npm run seed                                      # tenant: re-seed the secrets row only (idempotent)
+npm run delegate                                  # data owner: grant the agent its scope (6 functions)
+npm run demo                                      # agent: the expense flow + transcript (8 checks)
 npm run typecheck                                 # tsc --noEmit
 ```
 

@@ -98,14 +98,17 @@ cargo build --target wasm32-wasip2 --release      # -> target/wasm32-wasip2/rele
 cd client
 cp .env.example .env && $EDITOR .env              # three keys + webhook URL
 npm install
-npm run doctor                                    # env, SDK version, wasm presence
-npm run register                                  # uploads the wasm, records contract_id
-npm run maps                                      # policy/audit/fx/secrets maps + ACLs
-npm run delegate                                  # data owner scopes the agent
-npm run demo                                      # end-to-end: 3 claims, approval, ledger
+npm run doctor                                    # 21 preflight checks: env, SDK, wasm, hosts, PII_DID
+npm run register                                  # tenant: upload the wasm, create the 4 maps + ACLs,
+                                                  #         seed the policy and the secrets row
+npm run delegate                                  # data owner: scope the agent on 6 functions, 2 hosts
+npm run demo                                      # agent: 8 checks end to end, writes a transcript
 ```
 
-`npm run demo` prints one line per claim and writes the full transcript to
+`npm run seed` re-seeds only the `secrets` row on an already-deployed contract —
+idempotent, and the safe entry point once `register` has run.
+
+`npm run demo` prints one line per check and writes the full transcript to
 `client/demo-output/<timestamp>.json` for auditability and screenshots.
 
 ## Policy example

@@ -110,7 +110,8 @@ identity — run them in order:
 
 ```bash
 cd client
-npm run register    # tenant: register the wasm, create 4 maps, seed the policy
+npm run register    # tenant: register the wasm, create 4 maps, seed policy + secrets row
+npm run seed        # tenant: re-seed just the secrets row (idempotent; existing deployments)
 npm run delegate    # data owner: grant the agent 6 functions on 1 contract, 2 hosts
 npm run demo        # agent: the expense flow; writes a transcript
 ```

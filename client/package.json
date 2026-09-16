@@ -10,11 +10,10 @@
   },
   "scripts": {
     "doctor": "tsx src/doctor.ts",
-    "register": "tsx src/01-register-contract.ts",
-    "maps": "tsx src/02-create-maps.ts",
-    "delegate": "tsx src/03-delegate.ts",
-    "demo": "tsx src/04-demo.ts",
-    "audit-demo": "tsx src/04-demo.ts --audit-demo",
+    "register": "tsx src/deploy.ts",
+    "seed": "tsx src/deploy.ts --seed-only",
+    "delegate": "tsx src/grant.ts",
+    "demo": "tsx src/invoke.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "verify": "npm run typecheck && npm run build"
