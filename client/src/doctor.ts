@@ -25,11 +25,11 @@ import {
   contractVersion,
   delegationScopes,
   fxBaseCurrency,
+  readEnv,
   targetEnvironment,
   IDENTITY_ENV_VAR,
   IDENTITY_ROLE,
   requireEnv,
-  type Identity,
 } from "./lib/env.js";
 import { CONTRACT_FUNCTIONS, MAP_TAIL, canonicalName } from "./lib/interface.js";
 import { readRegistration } from "./lib/artifacts.js";
@@ -192,12 +192,35 @@ await check("wasm artifact", async () => {
 
 // --- identities ------------------------------------------------------------
 
-for (const identity of Object.keys(IDENTITY_ENV_VAR) as Identity[]) {
-  await check(`env ${IDENTITY_ENV_VAR[identity]} (${identity})`, () => {
-    requireEnv(IDENTITY_ENV_VAR[identity]);
-    return `set — ${IDENTITY_ROLE[identity]}`;
-  });
-}
+// The three credentials this project actually uses, checked for what they are
+// rather than by shape. An org agent never signs a session handshake — it calls
+// with a bearer token — so requiring a private key for it would fail a correct
+// setup, and a DID is per account, so a second data-owner key buys no isolation
+// in this deployment (the delegator is the tenant identity).
+
+await check(`env ${IDENTITY_ENV_VAR.tenant} (tenant)`, () => {
+  requireEnv(IDENTITY_ENV_VAR.tenant);
+  return `set — ${IDENTITY_ROLE.tenant}`;
+});
+
+await check("env AGENT_INVOKE_KEY (agent bearer)", () => {
+  requireEnv("AGENT_INVOKE_KEY");
+  return "set — the agent's credential, sent in the X-T3N-Api-Key header";
+});
+
+await check(`env ${IDENTITY_ENV_VAR.user} (user)`, () => {
+  const value = readEnv(IDENTITY_ENV_VAR.user);
+  return value === undefined
+    ? "not set — optional: the delegator here is the tenant identity (a DID is per account)"
+    : "set — a distinct data-owner identity signs the grant";
+});
+
+await check(`env ${IDENTITY_ENV_VAR.agent} (agent key)`, () => {
+  const value = readEnv(IDENTITY_ENV_VAR.agent);
+  return value === undefined
+    ? "not set — optional: an org agent invokes with its bearer token, not a key"
+    : "set — the agent also holds an Ethereum key";
+});
 
 await check("env T3N_ENV", () => `target cluster: ${targetEnvironment()}`);
 
@@ -227,6 +250,22 @@ await check("delegation scopes", () => {
   return scopes.length === 0
     ? "empty (least privilege: the contract reads no org-data scopes)"
     : `${scopes.length} org-data scope(s) delegated`;
+});
+
+await check("delegated-call identity (PII_DID)", () => {
+  // Egress is authorised for the identity a call acts FOR. An agent invoke
+  // without `pii_did` is a self call, the agent holds no grant of its own, and
+  // the enclave then denies the contract's outbound calls with an empty
+  // allowlist while the real grant sits on the delegator's document (BUG-14).
+  // Catch it here rather than three layers down inside the enclave.
+  const piiDid = readEnv("PII_DID") ?? readEnv("DELEGATOR_DID") ?? readEnv("USER_DID");
+  if (piiDid === undefined || piiDid === "") {
+    throw new Error(
+      "PII_DID is unset — agent calls would be self calls and every outbound call " +
+        "would fail with host/http.egress_denied. Set it to the delegator's DID.",
+    );
+  }
+  return `${piiDid} — egress resolves against this identity's grant`;
 });
 
 // --- artifacts and reachability -------------------------------------------

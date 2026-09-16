@@ -77,7 +77,8 @@ minimal: every extra crate is both attack surface and enclave load time.
 | `T3N_ENVIRONMENT` | `testnet` |
 | `TENANT_API_KEY` | tenant identity: owns the contract, maps and policy |
 | `TENANT_DID` | tenant DID; read back from a session, never constructed |
-| `USER_API_KEY` | the data owner who signs the delegation grant |
+| `USER_API_KEY` | optional data owner who signs the grant (the delegator here is the tenant identity) |
+| `PII_DID` | the identity a delegated call acts for; unset means a self call with no egress grant (`BUG-14`) |
 | `ORG_DID` | organisation that owns the provisioned agent |
 | `AGENT_DID` | the agent that calls the contract |
 | `AGENT_KEY_ID` | the public half of the agent's bearer token |

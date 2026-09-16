@@ -1,0 +1,70 @@
+{
+  "ran_at": "2026-09-16T06:46:39.679Z",
+  "environment": "testnet",
+  "node_base_url": "https://cn-api.sg.testnet.t3n.terminal3.io",
+  "contract": "z:f817f49837375d99b44cbf8907becc154f2a5fc9:expense-guard",
+  "contract_version": "0.1.0",
+  "call_mode": "self",
+  "agent_did": "did:t3n:a13591f52ba98b9068801c80719e56d03c74ee81",
+  "agent_key_id": "1d05c0d366903abd",
+  "tenant_did": "did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9",
+  "note": "the bearer token is deliberately absent: never logged, never persisted",
+  "steps": [
+    {
+      "step": "0 health",
+      "description": "liveness",
+      "expected": "ok=true",
+      "actual": "{\"ok\":true,\"contract\":\"expense-guard\",\"version\":\"0.1.0\",\"tenant_did\":\"f817f49837375d99b44cbf8907becc154f2a5fc9\",\"cluster_ts\":1789541190}",
+      "status": "PASS"
+    },
+    {
+      "step": "0b delegation",
+      "description": "grant present for the 5 called functions",
+      "expected": "authorised=true",
+      "actual": "authorised=false satisfied=0 missing=[]",
+      "status": "MISMATCH"
+    },
+    {
+      "step": "1 get-policy",
+      "description": "policy present",
+      "expected": "categories>=1",
+      "actual": "categories=3",
+      "status": "PASS"
+    },
+    {
+      "step": "2 check-expense EXP-1042",
+      "description": "first claim — FX conversion + decision",
+      "expected": "compliant",
+      "actual": "verdict=needs_approval base_amount=null USD fx_rate=null fx_source=null rules=[\"fx_unavailable\"] ledger_seq=1",
+      "status": "MISMATCH"
+    },
+    {
+      "step": "3 duplicate EXP-1042",
+      "description": "resubmission caught",
+      "expected": "rule_hits contains possible_duplicate",
+      "actual": "verdict=needs_approval rules=[\"fx_unavailable\",\"possible_duplicate\"] ledger_seq=2",
+      "status": "PASS"
+    },
+    {
+      "step": "4 threshold EXP-1044",
+      "description": "threshold escalation",
+      "expected": "needs_approval + over_approval_threshold",
+      "actual": "verdict=needs_approval base_amount=null rules=[\"fx_unavailable\"]",
+      "status": "MISMATCH"
+    },
+    {
+      "step": "5 rejected EXP-1045",
+      "description": "disallowed category",
+      "expected": "rejected + disallowed_category",
+      "actual": "verdict=rejected rules=[\"disallowed_category\"]",
+      "status": "PASS"
+    },
+    {
+      "step": "6 get-audit",
+      "description": "ledger read-back",
+      "expected": "count>=4 (one record per check-expense above)",
+      "actual": "count=4",
+      "status": "PASS"
+    }
+  ]
+}

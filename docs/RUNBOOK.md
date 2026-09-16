@@ -60,20 +60,30 @@ cp .env.example .env && chmod 600 .env
 ```dotenv
 T3N_ENVIRONMENT=testnet
 TENANT_API_KEY=0x...            # tenant private key
-USER_API_KEY=0x...              # the key that signs the delegation grant
-ORG_DID=did:t3n:...
-AGENT_DID=did:t3n:...
-AGENT_KEY_ID=t3n_key_...
+TENANT_DID=did:t3n:...          # read back from a session, never constructed
+PII_DID=did:t3n:...             # the identity the grant belongs to — see below
 AGENT_INVOKE_KEY=t3n_key_...    # bearer token, printed once at agent create
+AGENT_KEY_ID=t3n_key_...
+AGENT_DID=did:t3n:...
+ORG_DID=did:t3n:...
 CONTRACT_TAIL=expense-guard
 CONTRACT_VERSION=0.1.0
 FX_BASE_CURRENCY=USD
 APPROVAL_WEBHOOK_URL=https://postman-echo.com/post
 ```
 
-`npm run doctor` then checks 19 things — node and SDK versions, the SDK's
+`USER_API_KEY` (a distinct data-owner key) and `AGENT_API_KEY` (an Ethereum key for
+the agent) are both optional and both unset in the deployment above: a DID is per
+account, so a second key for the same account returns the same DID and adds no
+isolation, and an org agent's only credential is its bearer token. `PII_DID` is not
+optional — see step 4.
+
+`npm run doctor` then checks 21 things — node and SDK versions, the SDK's
 exported surface, the built wasm and its fingerprint, the contract tail and
 version against `docs/INTERFACE.md`, both reachable hosts, and the credentials.
+One of them is the delegated-call identity: `PII_DID` missing is a setup that
+authenticates cleanly and then fails inside the enclave (BUG-14), so it is worth
+catching before the first call.
 Its registration-record check is the one to watch: it compares the wasm on disk
 with the one that was registered, so it catches "you rebuilt and forgot to
 re-register".
@@ -111,9 +121,17 @@ every call, and re-registering the same version is refused outright
 there is no API to read it back afterwards (`BUG-11`), so `register` persists it
 to `client/artifacts/registration.json` and the later steps read it from there.
 
-`delegate` resolves the approval webhook host from the live `z:<tid>:secrets`
-row first, falling back to `APPROVAL_WEBHOOK_URL`, and refuses to write a grant
-whose `allowed_hosts` disagree with what the contract will actually call.
+`delegate` reads the delegation document first, keeps every row it does not own
+(the profile-scope grant on `tee:user/contracts` included), merges in its own row
+and posts the result — `member-delegation-update` replaces the whole document, so a
+blind write drops the rest. `allowed_hosts` is derived from `APPROVAL_WEBHOOK_URL`
+plus the FX host, and the step refuses to write a grant that does not cover what
+the contract will actually call.
+
+`demo` refuses to start without `PII_DID`, for the reason step 2 lists: an agent
+invoke that names no identity is a self call, the agent holds no grant of its own,
+and every outbound call is denied with an empty allowlist while the grant sits
+correctly on the delegator's document (`BUG-14`).
 
 ## 5. Read the results
 
@@ -144,13 +162,18 @@ placeholder. Doctor stops at the first failure and names it.
 **`contract version is not higher than`** on re-register. Bump
 `CONTRACT_VERSION`, or skip registration and reuse the recorded `contract_id`.
 
-**`fx_unavailable` in a verdict.** The enclave's egress to `open.er-api.com` is
-not granted. Outbound HTTP is gated by the caller's grant `allowed_hosts` — the
-contract is right to refuse rather than invent a rate, and the demo records the
-rule id so the reason is visible.
+**`fx_unavailable` in a verdict, or `host/http.egress_denied` from the host.**
+The enclave could not dial `open.er-api.com`. Two causes, and the second is the
+one that costs an afternoon:
 
-**`host/http.egress_denied`.** Same cause, one layer down: the host rejected the
-call before the contract saw it.
+1. the grant's `allowed_hosts` do not cover the host; or
+2. the call named no `pii_did`, so the acting identity was the agent, which holds
+   no grant of its own. The grant on the delegator's document is correct and reads
+   back intact, and the resolved allowlist is still empty. That is `BUG-14`, and it
+   is why `doctor` and `demo` both refuse to run without `PII_DID`.
+
+Either way the contract is right to refuse rather than invent a rate: the verdict
+carries `fx_unavailable`, `base_amount` is `null`, and the rule id says why.
 
 **`AccessDenied` on a KV read or write.** The map's ACL does not include the
 contract's current numeric id. If you re-registered without updating the ACLs,

@@ -59,19 +59,34 @@ manifest. It imports `logging`, `kv-store`, `http`,
 `http-with-placeholders` and `tenant-context`; removing an import is the only
 way to remove a capability.
 
-Egress is authorised per call from the **calling user's** delegation grant:
+Egress is authorised per call, from the delegation grant of **the identity the call
+acts for**. The accepted row shape carries a list of functions plus the hosts that
+row may reach:
 
 ```json
 { "grantee": "did:t3n:<agent>", "contract_id": "z:<tid>:expense-guard",
+  "functions": ["check-expense", "request-approval"], "scopes": ["…"],
   "version_req": "0.1.0",
-  "functions": ["health","set-policy","get-policy","check-expense",
-                "request-approval","get-audit"],
   "allowed_hosts": ["open.er-api.com", "postman-echo.com"] }
 ```
 
-`member-delegation-update` **replaces** the member's whole policy, so a naive
-single-grant write silently drops earlier grants. The harness therefore uses the
-read-merge-write path where the SDK exposes it, and says which path it used.
+Per-function granularity is reachable by posting one such row per function, with a
+single-element `functions` list — useful when different functions need different
+hosts. What the SDK declares for that case (`BoundGrant.function: string`) is
+rejected by the node, so the loop has to be written by hand (BUG-15).
+
+The trap this design sets is on the *call* side, and it is BUG-14: an agent
+`invoke` without `pii_did` is a **self** call, so the acting identity is the agent,
+whose own document grants nothing — the enclave then denies the outbound call with
+`egress_denied … not in the resolved allowlist []` while the grant above sits
+correctly on the delegator's document. `src/invoke.ts` therefore refuses to run
+without `PII_DID` and prints that reasoning instead.
+
+`member-delegation-update` **replaces** the whole document, so a naive
+single-grant write silently drops every other grant — including rows it does not
+own, such as the profile-scope grant on `tee:user/contracts`. `src/grant.ts`
+therefore reads the document first, keeps every row that is not the one it is
+about to write, and posts the merged document back.
 
 ## Ledger design
 

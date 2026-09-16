@@ -1,0 +1,69 @@
+{
+  "ran_at": "2026-09-16T06:43:59.776Z",
+  "environment": "testnet",
+  "node_base_url": "https://cn-api.sg.testnet.t3n.terminal3.io",
+  "contract": "z:f817f49837375d99b44cbf8907becc154f2a5fc9:expense-guard",
+  "contract_version": "0.1.0",
+  "agent_did": "did:t3n:a13591f52ba98b9068801c80719e56d03c74ee81",
+  "agent_key_id": "1d05c0d366903abd",
+  "tenant_did": "did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9",
+  "note": "bearer token intentionally absent: never logged, never persisted",
+  "steps": [
+    {
+      "step": "0 health",
+      "description": "liveness",
+      "expected": "ok=true",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "BLOCKED",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    },
+    {
+      "step": "1 set-policy",
+      "description": "install INTERFACE.md policy",
+      "expected": "stored=true, categories=3",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "ERROR",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    },
+    {
+      "step": "2 check-expense EXP-1042",
+      "description": "first claim",
+      "expected": "compliant",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "ERROR",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    },
+    {
+      "step": "3 duplicate EXP-1042",
+      "description": "resubmission",
+      "expected": "possible_duplicate",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "ERROR",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    },
+    {
+      "step": "4 threshold EXP-1044",
+      "description": "threshold escalation",
+      "expected": "needs_approval",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "ERROR",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    },
+    {
+      "step": "5 rejected EXP-1045",
+      "description": "disallowed category",
+      "expected": "rejected",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "ERROR",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    },
+    {
+      "step": "6 get-audit",
+      "description": "ledger read-back",
+      "expected": "count>=4",
+      "actual": "InvokeError: invoke request failed: server returned HTTP 404",
+      "status": "ERROR",
+      "error": "InvokeError: invoke request failed: server returned HTTP 404"
+    }
+  ]
+}

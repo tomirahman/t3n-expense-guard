@@ -386,61 +386,114 @@ ledger is not obviously the most expensive thing in it.
 accept `--agent <did>` on `token balance` for an org admin. Either one turns a
 runtime 403 into a preflight check.
 
-## BUG-14 — the delegation write accepts a row the resolver ignores, and the read-back confirms it
+## BUG-14 — a call that omits `pii_did` is resolved as a self call, and the denial names neither the identity nor the grant
 
-This cost us more time than anything else in this log, because every signal said
-the write had worked.
+This is the one that cost us the most time, because we diagnosed it backwards
+first: every signal pointed at the delegation document, and the document was
+correct the whole time.
 
-`BoundGrant` declares `function: string` — one function per row — and says so
-explicitly: *"One function per grant: a client authorising a grantee on several
-functions posts several rows, each carrying the full `scopes` that function
-needs — there is no more multi-function fan-out on the wire."*
-
-Our first client wrote the legacy-looking shape instead, one row per grantee:
+What the walkthrough tells a builder to do — and what we did — is to write one row
+on the delegator's own delegation document naming the agent as grantee, listing the
+contract's functions and the hosts the contract may dial:
 
 ```json
 { "grantee": "did:t3n:a13591f5…",
   "contract_id": "z:f817f498…:expense-guard",
   "functions": ["health", "set-policy", "get-policy", "check-expense",
                 "request-approval", "get-audit"],
-  "allowed_hosts": ["open.er-api.com"] }
+  "allowed_hosts": ["open.er-api.com", "postman-echo.com"] }
 ```
 
-The platform accepted it. `member-delegation-update` returned success, and
-`member-delegation-get` echoed the document back including `functions` *and*
-`allowed_hosts`, so our own verification step — "stored functions == contract
-surface", "stored allowed_hosts == the host the contract dials" — passed on every
-run. The document is stored without shape validation, so a read-back proves only
-that the node remembers what it was given.
-
-The resolver keys on `(grantee, contract_id, function)`, matched no row at all,
-and resolved an **empty** egress allowlist. The failure surfaced three layers
-away, inside the enclave, as:
+The write succeeds and `member-delegation-get` echoes the row back, `allowed_hosts`
+included. The agent's first call to a contract that dials out then fails with:
 
 ```
 fx: live lookup failed: host/http.egress_denied: egress host(s)
     [open.er-api.com] not in the resolved allowlist []
-    (exact string match, so scheme and port must agree)
 ```
 
-The empty `[]` is the tell: the document we could read contained the host, and
-the allowlist the host consulted did not. Nothing in that error — and nothing in
-the accepting write or the confirming read — points at the delegation shape.
+The allowlist is empty although the document granting it is stored on the node and
+reads back intact. `allowed_hosts` is resolved **per call, for the identity the call
+acts for**, and an `invoke` request without `pii_did` is a *self* call: the acting
+identity is the agent, the agent's own delegation document grants nothing, so the
+resolver has no host to read. Set `pii_did` to the delegator and the same call, the
+same document and the same contract resolve the host:
 
-**Fix:** validate the row on write. Reject unknown fields, and treat `functions`
-as the legacy form that must be fanned out; the SDK already exports `fanOutGrant`
-and `mergeGrants` for exactly that, and its own JSDoc describes the fan-out. A
-warning on an unrecognised field turns an enclave-side mystery into a one-line
-client error. If opaque storage is deliberate, then `member-delegation-get` should
-not be described as a way to verify a write.
+```
+{"expense_id":"EXP-…","verdict":"compliant","base_amount":48.46,
+ "fx_rate":1.153788,"fx_source":"open.er-api.com","rule_hits":[]}
+```
+
+The SDK already ships the check that would have found this in one call —
+`discoverCheckDelegation({ contract, pii_did, functions })` — and for the omitted
+`pii_did` it answers:
+
+```
+{"authorised":false,"disclosed":false,"satisfied":[],"missing":[]}
+```
+
+Both `satisfied` and `missing` are empty, so the field whose name promises a
+diagnosis ("reports which edge is missing for a given action", per the SDK's own
+documentation) carries none. With `pii_did` set it becomes `authorised: true` with
+the satisfied edge listed. An empty `missing` array beside `authorised: false` is
+the least actionable answer the API could give, and it points the reader at the
+grant document — which is exactly the wrong place.
+
+**Fix:** have the denial name the acting identity and the grants that were
+considered, e.g. *"no grant for the acting identity did:t3n:a13591f5…; grants for
+this grantee exist on did:t3n:f817f498… — pass `pii_did` to act for it"*. Failing
+that, populate `missing` in `discoverCheckDelegation`: a builder following the
+walkthrough has no other way to tell a self call from a delegated one. Two related
+traps belong in the same report: the node stores the document without validating its
+shape, so a read-back proves only that the node remembers what it was given — it is
+not a verification step, and a client that treats it as one will conclude that a
+correct document is broken (as ours did); and the row shape itself is a red
+herring, which we confirmed by writing both the single-row and the six-row forms and
+calling the contract after each — both resolve, `pii_did` is the only variable that
+changed the outcome.
+
+## BUG-15 — the SDK's declared grant row is rejected by the node, and the type is the only machine-readable spec
+
+`BoundGrant` in `@terminal3/t3n-sdk` declares:
+
+```ts
+/** One function per grant: a client authorising a grantee on several functions
+ *  posts several rows, each carrying the full `scopes` that function needs —
+ *  there is no more multi-function fan-out on the wire. */
+function: string;
+```
+
+Writing exactly that row fails at the node:
+
+```
+RPC Error: Invalid delegation document: unknown field `function`, expected one of
+`grantee`, `contract_id`, `version_req`, `functions`, `scopes`, `read_scopes`,
+`allowed_hosts`, `window` at line 1 column 840
+```
+
+So the accepted vocabulary is `functions: string[]` — the shape the SDK's own
+comment describes as retired — while the declared per-function field cannot be
+serialised at all. Per-function granularity is still reachable on the wire (six
+single-element rows, each carrying its own `allowed_hosts`, are accepted and
+resolve), but a builder who trusts the type hits a hard error at the last step of
+the walkthrough, and the error lists the fields the docs do use, which reads as
+though the docs are the broken part.
+
+**Fix:** make the declared type match the wire (`functions: string[]`), or accept
+both names, and say in one place which field the resolver keys on. The least
+privilege consequence is worth stating too: the documented single row carries one
+`allowed_hosts` list for all six functions, so an agent granted only `check-expense`
+inherits the webhook host as well — per-function egress scoping needs the
+single-element form the type cannot express.
 
 ## How we'd prioritise the fixes
 
 1. **BUG-09** — blocks the documented first command.
 2. **BUG-01** — blocks the documented first paste.
-3. **BUG-14** — a write that is accepted, echoed back and ignored: every signal
-   says success, and the failure lands inside the enclave as an egress denial.
-   Cheapest to fix, dearest to diagnose.
+3. **BUG-14** — a grant that is present, accepted and echoed back, then not
+   applied because the call named no acting identity: every signal says success and
+   the failure lands inside the enclave as an egress denial. Cheapest to fix,
+   dearest to diagnose.
 4. **BUG-02** — silent path to a non-loadable component.
 5. **BUG-11** — the numeric id that map ACLs need cannot be read back, so
    re-registering a tail silently orphans every ACL that used the old id, and the
@@ -451,5 +504,7 @@ not be described as a way to verify a write.
    with no source maps, while the source repo is private; that is the opposite of
    the verifiability T3N sells.
 8. **BUG-04, BUG-05** — tooling friction with no workaround.
-9. **BUG-06, BUG-07, BUG-08, BUG-12, BUG-13** — vocabulary drift, one
+9. **BUG-15** — the declared grant row is rejected by the node: the type and the
+   wire disagree, and the type is the only machine-readable one.
+10. **BUG-06, BUG-07, BUG-08, BUG-12, BUG-13** — vocabulary drift, one
    undocumented and mis-sourced CLI flag, and a balance the CLI cannot look up.

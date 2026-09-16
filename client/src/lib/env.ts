@@ -103,9 +103,9 @@ export function requireEnv(name: string): string {
  * user delegates, and the agent is the caller of record.
  */
 export const IDENTITY_ENV_VAR = {
-  tenant: "T3N_API_KEY",
-  agent: "AGENT_KEY",
-  user: "USER_KEY",
+  tenant: "TENANT_API_KEY",
+  agent: "AGENT_API_KEY",
+  user: "USER_API_KEY",
 } as const;
 
 export type Identity = keyof typeof IDENTITY_ENV_VAR;
@@ -130,10 +130,10 @@ export function identityKey(identity: Identity): string {
  * artifact; `production` must be opted into explicitly.
  */
 export function targetEnvironment(): Environment {
-  const raw = readEnv("T3N_ENV") ?? "testnet";
+  const raw = readEnv("T3N_ENVIRONMENT") ?? readEnv("T3N_ENV") ?? "testnet";
   if (raw === "testnet" || raw === "production" || raw === "sandbox") return raw;
   throw new ConfigError(
-    `T3N_ENV must be one of "testnet" | "production" | "sandbox" — got ${JSON.stringify(raw)}`,
+    `T3N_ENVIRONMENT must be one of "testnet" | "production" | "sandbox" — got ${JSON.stringify(raw)}`,
   );
 }
 

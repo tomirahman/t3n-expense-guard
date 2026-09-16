@@ -42,6 +42,13 @@ Three credentials, three jobs, no shared blast radius:
 
 The agent's credential is not a private key and never touches the session handshake: it goes to the invoke endpoint in an `X-T3N-Api-Key` header, and the contract's private material is generated inside the enclave and never leaves it.
 
+Each agent call also names the identity it acts *for* (`pii_did` = the delegator).
+That is not decoration: the enclave resolves the contract's outbound-host allowlist
+per call from that identity's grant, and a call that names nobody is treated as a
+self call — the agent holds no grant of its own, so the grant on the delegator's
+document is invisible to the resolver. `BUG-14` is what that looks like from the
+outside.
+
 ## Deployed and verified
 
 | Fact | Value |
@@ -51,6 +58,8 @@ The agent's credential is not a private key and never touches the session handsh
 | wasm | 255,734 bytes, sha256 `5dd3a964bc2e0b3f…` |
 | component validation | `wasm-tools validate` OK; import set identical to the vendor sample |
 | native tests | 115 unit tests + 1 doctest, green |
+| live demo | 8 of 8 steps green, run twice back to back — health, delegation, policy, FX-converted verdict, duplicate, threshold, rejection, ledger read-back |
+| outbound HTTP from the enclave | real: `fx_source: open.er-api.com`, `fx_rate: 1.153788` for a EUR claim |
 | tenant DID | `did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9` |
 | org / agent DID | `did:t3n:85c188ff697c5c7aae96b495bdc8c087dcdae4c9` / `did:t3n:a13591f52ba98b9068801c80719e56d03c74ee81` |
 
@@ -58,7 +67,7 @@ The agent's credential is not a private key and never touches the session handsh
 
 ## What we found while building it
 
-`docs/BUGLOG.md` documents 14 defects we hit and reproduced, each with the file and line, a verbatim error, and a proposed fix. The one that cost us the most is also the cheapest to fix: the delegation write accepted a row the resolver then ignored — `member-delegation-update` returned success and `member-delegation-get` echoed the row back, while the enclave resolved an **empty** egress allowlist and denied the contract's own HTTP call as `host/http.egress_denied ... not in the resolved allowlist []`. Every signal said the write had worked. The others range from a duplicate import that stops the documented first paste from compiling, through a `.cargo/config.toml` that makes the vendor sample's own `cargo test` fail, four host-ABI capabilities (`kv-store.scan`, `set-claims-digest`, `token.get-balance`, `seq-no`) that exist in the vendored WIT and in none of the 48 published docs, an SDK shipped obfuscated with no source maps while the source repository is private, a `contract_id` split whose numeric half cannot be read back after a re-registration, to a CLI that cannot read an agent's balance because it only accepts private keys.
+`docs/BUGLOG.md` documents 15 defects we hit and reproduced, each with the file and line, a verbatim error, and a proposed fix. The one that cost us the most is also the cheapest to fix: an agent call that names no acting identity is resolved as a **self** call, so the enclave looks for the contract's egress grant on the agent's own document, finds nothing, and denies the contract's outbound HTTP with `host/http.egress_denied ... not in the resolved allowlist []` — while the correct grant sits on the delegator's document, echoed back intact by `member-delegation-get`. Every signal said the write had worked, and the one API that exists to name the missing edge, `discoverCheckDelegation`, returned `authorised: false` with an empty `missing` list. A second one belongs in the same report: the SDK's declared grant row (`function: string`, with a comment describing the multi-function form as retired) is rejected by the node outright, which accepts `functions: [...]` — the shape the docs use. The others range from a duplicate import that stops the documented first paste from compiling, through a `.cargo/config.toml` that makes the vendor sample's own `cargo test` fail, four host-ABI capabilities (`kv-store.scan`, `set-claims-digest`, `token.get-balance`, `seq-no`) that exist in the vendored WIT and in none of the 48 published docs, an SDK shipped obfuscated with no source maps while the source repository is private, a `contract_id` split whose numeric half cannot be read back after a re-registration, to a CLI that cannot read an agent's balance because it only accepts private keys.
 
 ## Reproducing it
 

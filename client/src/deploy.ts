@@ -2,12 +2,17 @@
  * `deploy.ts` — one-shot provisioning of the z-expense-guard TEE contract.
  *
  * This is the "step 01 + step 02" of the harness collapsed into a single
- * re-runnable script. It does four things, in order, and nothing else:
+ * re-runnable script. It does five things, in order, and nothing else:
  *
  *   1. authenticate as the **tenant** (the identity that owns the z-namespace),
  *   2. register the already-built WASM component under `<tail>@<version>`,
  *   3. create the four KV maps the contract reads/writes, ACL'd to the contract,
- *   4. seed the policy document at `z:<tid>:policy` key `current`.
+ *   4. seed the policy document at `z:<tid>:policy` key `current`,
+ *   5. seed the approval webhook row at `z:<tid>:secrets` key
+ *      `approval_webhook_url` — the row `request-approval` reads at call time,
+ *      and the row the delegation grant resolves `allowed_hosts` from. It is
+ *      seeded idempotently: absent → written; identical → left alone; different
+ *      → reported loudly and NOT overwritten unless `SECRETS_OVERWRITE=1`.
  *
  * Map names, map tails, the policy document shape and the version live in
  * `./lib/interface.ts` — the TypeScript mirror of `docs/INTERFACE.md`. Nothing
@@ -22,6 +27,10 @@
  *
  * Usage:
  *   cd client && set -a && . ./.env && set +a && ./node_modules/.bin/tsx src/deploy.ts
+ *
+ *   # seed only the secrets row (no register, no map lifecycle, no policy) —
+ *   # the additive path for an already-deployed contract:
+ *   cd client && set -a && . ./.env && set +a && ./node_modules/.bin/tsx src/deploy.ts --seed-only
  */
 
 import { createHash } from "node:crypto";
@@ -48,6 +57,7 @@ import {
   CONTRACT_TAIL_DEFAULT,
   CONTRACT_VERSION_DEFAULT,
   MAP_TAIL,
+  SECRET_WEBHOOK_URL_KEY,
   demoPolicy,
   tenantIdFromDid,
   type Policy,
@@ -89,6 +99,9 @@ const MAP_TAILS = [MAP_TAIL.policy, MAP_TAIL.audit, MAP_TAIL.fx, MAP_TAIL.secret
 
 /** Key inside `z:<tid>:policy` holding the active policy document. */
 const POLICY_KEY = "current";
+
+/** Key inside `z:<tid>:secrets` holding the approval webhook URL. */
+const SECRET_WEBHOOK_KEY = SECRET_WEBHOOK_URL_KEY;
 
 function requireEnv(name: string): string {
   const raw = process.env[name];
@@ -330,15 +343,137 @@ async function verifyPolicy(session: TenantSession): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
+// 5. Seed the approval webhook secret
+// ---------------------------------------------------------------------------
+
+/**
+ * Fallback for the approval webhook URL when `APPROVAL_WEBHOOK_URL` is unset.
+ *
+ * This is the same value `client/.env.example` documents, and it is deliberately
+ * boring (a public echo endpoint): the contract has no default and no fallback,
+ * so a deployment that only seeded the policy cannot ever complete
+ * `request-approval` — it fails on egress, and the delegation grant cannot even
+ * resolve the host to allow.
+ */
+const WEBHOOK_URL_FALLBACK = "https://postman-echo.com/post";
+
+/** The webhook URL this deployment should have: env first, `.env.example` second. */
+async function approvedWebhookUrl(): Promise<{ url: string; source: string }> {
+  const fromEnv = process.env["APPROVAL_WEBHOOK_URL"]?.trim();
+  if (fromEnv !== undefined && fromEnv.length > 0) {
+    return { url: fromEnv, source: "APPROVAL_WEBHOOK_URL (env)" };
+  }
+  try {
+    const source = await readFile(path.join(MODULE_DIR, "..", ".env.example"), "utf8");
+    const documented = /^APPROVAL_WEBHOOK_URL=(\S+)/m.exec(source)?.[1];
+    if (documented !== undefined && documented.length > 0) {
+      return { url: documented, source: "client/.env.example (documented default)" };
+    }
+  } catch {
+    // fall through to the hard-coded default below
+  }
+  return { url: WEBHOOK_URL_FALLBACK, source: "built-in default" };
+}
+
+type SecretOutcome = "seeded" | "already-correct" | "kept-existing" | "overwritten" | "verify-failed";
+
+interface SecretSeed {
+  ok: boolean;
+  outcome: SecretOutcome;
+  mapName: string;
+  /** What the node holds after this call — read back, never assumed. */
+  stored: string | null;
+}
+
+/**
+ * Seed `z:<tid>:secrets[approval_webhook_url]` idempotently.
+ *
+ * The row is the contract's own source of truth for where `request-approval`
+ * POSTs, and the delegation grant resolves the host it must allow from this same
+ * row. So the rule is: absent → write it; already the same → leave it (a no-op,
+ * reported as such); different → report the divergence loudly and DO NOT clobber
+ * an operator's value, unless they explicitly set `SECRETS_OVERWRITE=1`.
+ *
+ * Every outcome is verified by reading the row back, so the printed value is the
+ * node's own answer rather than an echo of what was sent.
+ */
+async function seedSecrets(session: TenantSession): Promise<SecretSeed> {
+  const tail = MAP_TAIL.secrets;
+  const mapName = session.tenant.canonicalName(tail);
+  const expected = `z:${session.tenantId}:${tail}`;
+  if (mapName !== expected) {
+    throw new Error(`canonical map name ${mapName} does not match the contract's ${expected}`);
+  }
+
+  const want = await approvedWebhookUrl();
+  detail("map", mapName);
+  detail("key", SECRET_WEBHOOK_KEY);
+  detail("intended value", want.url);
+  detail("value source", want.source);
+
+  let current: string | null = null;
+  try {
+    current = await session.tenant.maps.entryGet(tail, SECRET_WEBHOOK_KEY);
+  } catch (error) {
+    // An unreadable row is treated as "unknown", not as "absent": the write
+    // below is the only way to converge, and it is reported either way.
+    note(`read-back before the write failed: ${errorText(error)}`);
+    current = null;
+  }
+
+  const overwrite = process.env["SECRETS_OVERWRITE"] === "1";
+  let outcome: SecretOutcome;
+
+  if (current === want.url) {
+    outcome = "already-correct";
+    note("the row already holds this exact value — nothing written (idempotent)");
+  } else if (current !== null && !overwrite) {
+    // Never silently replace an operator's value.
+    outcome = "kept-existing";
+    console.log(`   ! the row already holds a DIFFERENT value: ${current}`);
+    console.log("   ! NOT overwriting it — re-run with SECRETS_OVERWRITE=1 if that is intended.");
+  } else {
+    if (current !== null) {
+      console.log(`   ! overwriting the existing value: ${current}  (SECRETS_OVERWRITE=1)`);
+      outcome = "overwritten";
+    } else {
+      outcome = "seeded";
+    }
+    await session.tenant.maps.entrySet(tail, SECRET_WEBHOOK_KEY, want.url);
+  }
+
+  const readBack = await session.tenant.maps.entryGet(tail, SECRET_WEBHOOK_KEY);
+  const ok = readBack === want.url;
+  if (ok) {
+    detail("read-back", `${readBack}   (verified against the intended value)`);
+  } else {
+    outcome = "verify-failed";
+    console.log(`   ! read-back is ${readBack === null ? "ABSENT" : readBack} — expected ${want.url}`);
+  }
+  return { ok, outcome, mapName, stored: readBack };
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const tenantKey = requireEnv("TENANT_API_KEY");
   const expectedDid = process.env["TENANT_DID"]?.trim() ?? "";
+  /**
+   * `--seed-only` is the additive path for an already-deployed contract: it
+   * opens the tenant session and writes at most one KV row. No registration, no
+   * map lifecycle call, no policy write — so it cannot allocate a new
+   * `contract_id`, orphan an existing map ACL, or disturb the audit ledger.
+   */
+  const seedOnly = process.argv.includes("--seed-only");
 
   console.log("z-expense-guard deployment → T3N testnet");
-  console.log(`   wasm                    ${WASM_PATH}`);
+  if (seedOnly) {
+    console.log("   mode                    --seed-only (secrets row only: no register, no map create, no policy)");
+  } else {
+    console.log(`   wasm                    ${WASM_PATH}`);
+  }
 
   step("Authenticate as the tenant");
   const session = await connectTenant(tenantKey, expectedDid);
@@ -346,6 +481,18 @@ async function main(): Promise<void> {
   detail("tenant id (z:…)", session.tenantId);
   detail("environment", session.environment);
   detail("node", session.nodeUrl);
+
+  if (seedOnly) {
+    step("Seed the approval webhook secret");
+    const seeded = await seedSecrets(session);
+    step("Summary");
+    detail("secrets row", `${seeded.mapName} → key "${SECRET_WEBHOOK_KEY}"`);
+    detail("stored value", seeded.stored ?? "(absent)");
+    detail("outcome", seeded.outcome);
+    console.log(`\ndeploy --seed-only: ${seeded.ok ? "OK" : "FAILED"} (exit ${seeded.ok ? 0 : 1})`);
+    process.exitCode = seeded.ok ? 0 : 1;
+    return;
+  }
 
   step("Register the WASM component");
   const canonicalName = session.tenant.canonicalName(CONTRACT_TAIL);
@@ -398,6 +545,13 @@ async function main(): Promise<void> {
     );
   }
 
+  step("Seed the approval webhook secret");
+  // The contract's `request-approval` reads this row at call time, and step 03
+  // (`grant.ts`) resolves the egress host it must allow from the same row — so a
+  // deployment that stops before this step leaves `request-approval` unable to
+  // resolve its host and the enclave unable to reach it.
+  const secrets = await seedSecrets(session);
+
   step("Summary");
   detail("contract_id", registration.contractId);
   detail("contract name", registration.name);
@@ -407,7 +561,16 @@ async function main(): Promise<void> {
     detail(`map ${tail}`, `${result.name} (${result.outcome}, ${MAP_VISIBILITY}, only [${registration.contractId}])`);
   }
   detail("policy entry", `${seeded.name} → key "${seeded.key}" (${seeded.bytes} bytes)`);
-  console.log("\ndeploy: OK (exit 0)");
+  detail(
+    "secrets entry",
+    `${secrets.mapName} → key "${SECRET_WEBHOOK_KEY}" = ${secrets.stored ?? "(absent)"} (${secrets.outcome})`,
+  );
+  if (secrets.ok) {
+    console.log("\ndeploy: OK (exit 0)");
+  } else {
+    console.log(`\ndeploy: FAILED — the secrets row did not converge (${secrets.outcome}) (exit 1)`);
+    process.exitCode = 1;
+  }
 }
 
 await main();

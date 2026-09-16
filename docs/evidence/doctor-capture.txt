@@ -1,28 +1,28 @@
-Script started on 2026-09-16 13:50:20+07:00 [<not executed on terminal>]
-z-expense-guard client — doctor (19 checks)
+Script started on 2026-09-16 14:24:51+07:00 [<not executed on terminal>]
+z-expense-guard client — doctor (21 checks)
 
-PASS  node version                  node 22.23.1 (>= 20 required)
-PASS  package layout                ESM ("type": "module"), @terminal3/t3n-sdk pinned to 5.17.0
-PASS  sdk version                   @terminal3/t3n-sdk 5.17.0 (matches the pin)
-PASS  sdk api surface               11 required exports present
-PASS  repository layout             contract/wit/world.wit and docs/INTERFACE.md present
-PASS  wasm artifact                 249.7 KiB, sha256 5dd3a964bc2e0b3f…
-PASS  env T3N_API_KEY (tenant)      set — control plane: creates maps, registers the contract, seeds secrets
-FAIL  env AGENT_KEY (agent)         AGENT_KEY is not set — copy .env.example to .env and fill it in
-FAIL  env USER_KEY (user)           USER_KEY is not set — copy .env.example to .env and fill it in
-PASS  env T3N_ENV                   target cluster: testnet
-PASS  env CONTRACT_TAIL             registered as z:<tid>:expense-guard
-PASS  env CONTRACT_VERSION          0.1.0
-PASS  env registry vs INTERFACE.md  6 functions and 4 map tails match INTERFACE.md
-PASS  env FX_BASE_CURRENCY          USD
-WARN  env APPROVAL_WEBHOOK_URL      APPROVAL_WEBHOOK_URL is not set — copy .env.example to .env and fill it in
-PASS  delegation scopes             empty (least privilege: the contract reads no org-data scopes)
-PASS  registration record           z:f817f49837375d99b44cbf8907becc154f2a5fc9:expense-guard @ 0.1.0 → contract_id 1051
-PASS  node reachability             https://cn-api.sg.testnet.t3n.terminal3.io/status answered HTTP 200
-PASS  fx host reachability          https://open.er-api.com/v6/latest/USD answered HTTP 200
+PASS  node version                         node 22.23.1 (>= 20 required)
+PASS  package layout                       ESM ("type": "module"), @terminal3/t3n-sdk pinned to 5.17.0
+PASS  sdk version                          @terminal3/t3n-sdk 5.17.0 (matches the pin)
+PASS  sdk api surface                      11 required exports present
+PASS  repository layout                    contract/wit/world.wit and docs/INTERFACE.md present
+PASS  wasm artifact                        249.7 KiB, sha256 5dd3a964bc2e0b3f…
+PASS  env TENANT_API_KEY (tenant)          set — control plane: creates maps, registers the contract, seeds secrets
+PASS  env AGENT_INVOKE_KEY (agent bearer)  set — the agent's credential, sent in the X-T3N-Api-Key header
+PASS  env USER_API_KEY (user)              not set — optional: the delegator here is the tenant identity (a DID is per account)
+PASS  env AGENT_API_KEY (agent key)        not set — optional: an org agent invokes with its bearer token, not a key
+PASS  env T3N_ENV                          target cluster: testnet
+PASS  env CONTRACT_TAIL                    registered as z:<tid>:expense-guard
+PASS  env CONTRACT_VERSION                 0.1.0
+PASS  env registry vs INTERFACE.md         6 functions and 4 map tails match INTERFACE.md
+PASS  env FX_BASE_CURRENCY                 USD
+PASS  env APPROVAL_WEBHOOK_URL             https://postman-echo.com/post — grant host allowlist will be [open.er-api.com, postman-echo.com]
+PASS  delegation scopes                    empty (least privilege: the contract reads no org-data scopes)
+PASS  delegated-call identity (PII_DID)    did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9 — egress resolves against this identity's grant
+PASS  registration record                  z:f817f49837375d99b44cbf8907becc154f2a5fc9:expense-guard @ 0.1.0 → contract_id 1051
+PASS  node reachability                    https://cn-api.sg.testnet.t3n.terminal3.io/status answered HTTP 200
+PASS  fx host reachability                 https://open.er-api.com/v6/latest/USD answered HTTP 200
 
-16 passed, 1 warned, 2 failed
+21 passed, 0 warned, 0 failed
 
-Not ready. First failure: env AGENT_KEY (agent). See README.md for the setup steps.
-
-Script done on 2026-09-16 13:50:21+07:00 [COMMAND_EXIT_CODE="1"]
+Script done on 2026-09-16 14:24:54+07:00 [COMMAND_EXIT_CODE="0"]
