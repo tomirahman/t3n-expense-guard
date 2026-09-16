@@ -1,6 +1,6 @@
 # ExpenseGuard — a confidential expense-compliance agent on T3N
 
-**T3N Agent Build Challenge submission.** Repository: `<REPO_URL>` · Demo transcript: `client/demo-output/<TIMESTAMP>-invoke.json`
+**T3N Agent Build Challenge submission.** Repository: https://github.com/tomirahman/t3n-expense-guard · Demo transcript: `client/demo-output/<TIMESTAMP>-invoke.json`
 
 ExpenseGuard is an enterprise expense/invoice compliance agent whose policy, decision and audit trail never leave an attested enclave. It is a T3N TEE contract written in Rust, compiled to a WASM/WIT component, registered on T3N testnet, and driven end-to-end by an agent that holds its own scoped delegation.
 
