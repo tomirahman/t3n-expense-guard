@@ -1,0 +1,12 @@
+node_modules/
+target/
+.env
+*.wasm
+dist/
+.DS_Store
+
+# Vendored upstream sample, kept locally for ABI comparison only.
+reference/
+
+# Throwaway connectivity/scratch probes — never published.
+client/_probe*.ts

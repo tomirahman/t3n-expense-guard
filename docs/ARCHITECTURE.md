@@ -1,0 +1,97 @@
+# Architecture and threat model
+
+## Trust boundaries
+
+| boundary | crosses it | notes |
+|---|---|---|
+| employee → agent | claim JSON with an opaque `employee_ref` | no name, no email, no card data |
+| agent → enclave | authenticated session (agent DID) | the agent is a separate identity with its own key and credits |
+| enclave → KV maps | host-mediated, prefix-enforced | maps are `z:<tid>:*`; the contract can only touch its tenant's namespace |
+| enclave → internet | `http` / `http-with-placeholders` | each call is authorised from the calling user's grant, per call |
+| enclave → audit ledger | host-mediated | append-only by convention, sequence-numbered |
+
+The operator of the node is outside the trust boundary for policy contents and
+claim data: both live in tenant-scoped KV and inside enclave memory.
+
+## Data flow for one claim
+
+1. The agent calls `check-expense` with
+   `{expense_id, employee_ref, amount, currency, category, vendor, incurred_on}`.
+2. The contract loads the policy from `z:<tid>:policy` (`current`). If nothing
+   is stored it uses the built-in default policy and announces that in the
+   response, so no caller is ever silently evaluated against default rules.
+3. FX conversion: the cache `fx:<FROM>:<TO>` in `z:<tid>:fx` is consulted first.
+   On a miss or expiry (`fx_cache_ttl_hours`) the contract calls
+   `https://open.er-api.com/v6/latest/<FROM>` — a keyless, PII-free endpoint —
+   and caches the rate with the cluster timestamp.
+4. Duplicate detection reads `dup:<employee_ref>:<amount+currency+vendor hash>`
+   and compares the recorded cluster timestamp against `duplicate_window_days`.
+5. Rules are evaluated, the worst verdict wins (`rejected` > `needs_approval` >
+   `compliant`), and a record is appended to `z:<tid>:audit` under the next
+   `seq:<000001>` key, plus a pointer at `exp:<expense_id>`.
+6. The response returns the verdict, the rule ids that fired, the FX rate and
+   the ledger sequence number.
+
+## Why PII never enters the contract
+
+`request-approval` builds the outbound approval body with marker strings:
+
+```json
+{ "text": "Expense EXP-1042 flagged for approval",
+  "employee": "{{profile.first_name}} {{profile.last_name}}",
+  "contact":  "{{profile.verified_contacts.email.value}}" }
+```
+
+The contract composes the request; the host resolves the markers from the
+calling user's profile inside the enclave at dispatch time. Consequences:
+
+- WASM linear memory holds only the marker strings, so a memory-disclosure bug
+  in our own code cannot leak an employee's name.
+- Our logs and audit records store `employee_ref`, an opaque handle, only.
+- If the profile lacks a field, the host returns `PlaceholderUnknown(field)`.
+  The contract retries once without the optional markers and records
+  `profile_placeholder_fallback` in the audit entry instead of guessing a value.
+
+## Capability scoping
+
+The contract's capability set *is* its WIT import list — there is no separate
+manifest. It imports `logging`, `kv-store`, `http`,
+`http-with-placeholders` and `tenant-context`; removing an import is the only
+way to remove a capability.
+
+Egress is authorised per call from the **calling user's** delegation grant:
+
+```json
+{ "grantee": "did:t3n:<agent>", "contract_id": "z:<tid>:expense-guard",
+  "version_req": "0.1.0",
+  "functions": ["health","set-policy","get-policy","check-expense",
+                "request-approval","get-audit"],
+  "allowed_hosts": ["open.er-api.com", "postman-echo.com"] }
+```
+
+`member-delegation-update` **replaces** the member's whole policy, so a naive
+single-grant write silently drops earlier grants. The harness therefore uses the
+read-merge-write path where the SDK exposes it, and says which path it used.
+
+## Ledger design
+
+Records are keyed `seq:<6-digit>` and never rewritten; `exp:<expense_id>` points
+at the latest record for a claim so a single claim can be traced across
+`check-expense` and `request-approval`. Sequence numbers are derived by reading
+the highest existing key and incrementing.
+
+Limitations, stated honestly: KV has no atomic compare-and-set exposed through
+the host interface, so two concurrent writers could in principle pick the same
+sequence number. That is acceptable for an approval workflow (claims arrive
+serially per team) but would need a different design for high-throughput
+ledgers; see BUGLOG.md.
+
+## Failure modes
+
+| failure | behaviour |
+|---|---|
+| FX egress denied or upstream down | falls back to a non-expired cache entry; otherwise `fx_unavailable` forces `needs_approval` and `base_amount` is `null` |
+| policy map missing | built-in default policy is used and flagged in the response |
+| caller lacks a grant | host denies the outbound call (`host/http.egress_denied`); the verdict is still computed and recorded |
+| audit write fails | the function returns `Err("kv: ...")` — a verdict that cannot be recorded is not reported as success |
+| approver webhook non-2xx | `status: "failed"` with the HTTP code, still recorded in the ledger |

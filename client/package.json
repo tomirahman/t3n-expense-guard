@@ -1,0 +1,31 @@
+{
+  "name": "z-expense-guard-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript harness and end-to-end demo orchestrator for the z-expense-guard T3N ADK TEE contract.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "doctor": "tsx src/doctor.ts",
+    "register": "tsx src/01-register-contract.ts",
+    "maps": "tsx src/02-create-maps.ts",
+    "delegate": "tsx src/03-delegate.ts",
+    "demo": "tsx src/04-demo.ts",
+    "audit-demo": "tsx src/04-demo.ts --audit-demo",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "verify": "npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "@terminal3/t3n-sdk": "5.17.0",
+    "dotenv": "17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.3",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3"
+  }
+}

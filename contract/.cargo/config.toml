@@ -1,0 +1,11 @@
+# The contract builds to a WASM *component* for the T3N cluster via the
+# explicit command below (see README.md). The default target is deliberately
+# left as the host triple so that `cargo test` runs the native unit tests
+# instead of trying to execute a .wasm test binary.
+#
+#   cargo test                                        # native unit tests
+#   cargo build --target wasm32-wasip2 --release      # WASM component
+#   cargo wasm                                        # alias for the above
+
+[alias]
+wasm = "build --target wasm32-wasip2 --release"

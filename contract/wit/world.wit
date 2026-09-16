@@ -1,0 +1,77 @@
+/// z-expense-guard WIT world — enterprise expense & invoice compliance agent.
+///
+/// Imports required host capabilities:
+///   - tenant-context:         tenant DID, cluster timestamp
+///   - logging:                debug / info / error lines
+///   - kv-store:               policy, audit ledger, FX cache and secrets maps
+///   - http:                   FX rate lookup (carries no PII)
+///   - http-with-placeholders: approval webhook POST — the body carries
+///                             `{{profile.<field>}}` markers the host resolves
+///                             from the calling user's profile at dispatch time,
+///                             so employee PII never enters WASM memory.
+///
+/// http requires the `Http` HostCapability and http-with-placeholders requires
+/// the `HttpWithPlaceholders` HostCapability, both granted at admit time. The
+/// approval webhook URL lives in the z: KV map `z:<tid>:secrets` under the key
+/// `approval_webhook_url`. The contract builds the full map name at runtime
+/// using `tenant-context.tenant-did()`. The maps are created and populated by
+/// the tenant SDK before the contract runs.
+package z:expense-guard@0.1.0;
+
+world expense-guard {
+    import host:tenant/tenant-context@1.0.0;
+    import host:interfaces/logging@2.1.0;
+    import host:interfaces/kv-store@2.1.0;
+    import host:interfaces/http@2.1.0;
+    import host:interfaces/http-with-placeholders@2.1.0;
+
+    export contracts;
+}
+
+interface contracts {
+    /// Standard 3-field envelope used by all contracts callable from the node.
+    /// `input`        — JSON-serialized request payload specific to the function.
+    /// `user-profile` — always None for tenant contracts (resolved host-side).
+    /// `context`      — JSON-serialized DynamicContext (node-minted, trusted).
+    record generic-input {
+        input:        option<list<u8>>,
+        user-profile: option<list<u8>>,
+        context:      option<list<u8>>,
+    }
+
+    /// Liveness / self-description probe. No KV or egress access.
+    /// Input  (JSON): {}
+    /// Output (JSON): { ok, contract, version, tenant_did, cluster_ts }
+    health: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Install or replace the tenant's expense policy.
+    /// Input  (JSON): Policy  (see docs/INTERFACE.md)
+    /// Output (JSON): { stored: true, categories, base_currency }
+    set-policy: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Read back the installed policy.
+    /// Input  (JSON): {}
+    /// Output (JSON): Policy
+    get-policy: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Evaluate one expense claim against policy: category limits, approval
+    /// threshold, duplicate detection and FX conversion to the base currency.
+    /// Writes a tamper-evident record to the audit ledger.
+    /// Input  (JSON): { expense_id, employee_ref, amount, currency, category,
+    ///                  vendor, incurred_on }
+    /// Output (JSON): { expense_id, verdict, base_currency, base_amount, fx_rate,
+    ///                  fx_source, rule_hits[], ledger_seq, evaluated_at }
+    check-expense: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Ask a human approver for sign-off on a flagged expense. The request body
+    /// carries NO employee PII: it templates `{{profile.<field>}}` markers that
+    /// the host resolves from the calling user's profile.
+    /// Input  (JSON): { expense_id, use_profile, note? }
+    /// Output (JSON): { expense_id, status, http_code, approval_ref, ledger_seq }
+    request-approval: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Read the audit ledger back, newest first.
+    /// Input  (JSON): { expense_id?, employee_ref?, limit? }
+    /// Output (JSON): { entries[], count }
+    get-audit: func(req: generic-input) -> result<list<u8>, string>;
+}
