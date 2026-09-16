@@ -1,130 +1,172 @@
 # Runbook — deploying and demoing ExpenseGuard
 
-Everything needed to take this repo from clone to a live, verifiable demo on the
-T3N testnet. Ten to fifteen minutes end to end.
+Everything needed to take this repo from a clone to a live demo on T3N testnet.
+Fifteen minutes end to end, most of it `npm install`.
 
-## 0. What you need
+## 0. Prerequisites
 
-Three T3N identities, because the platform meters them separately:
+| tool | version we used | note |
+| --- | --- | --- |
+| Node.js | 22.23.1 | ESM; the SDK needs >= 20 |
+| Rust / cargo | 1.98.0 | `rustup target add wasm32-wasip2` |
+| `wasm-tools` | any recent | only for inspecting the component's ABI |
 
-| role | what it is | why it needs its own key |
-|---|---|---|
-| tenant | owns the contract, the KV maps and the policy | registration is billed to the tenant |
-| agent | the identity that actually calls the contract | an agent DID's balance starts at zero and is separate from the tenant's — reusing the tenant key fails metered calls with `InsufficientCreditError` |
-| user | stands in for the employee submitting a claim | the contract signs and resolves `{{profile.*}}` for the *calling* user |
+## 1. The three identities
 
-Get all three from the claim page (self-serve, no approval; revisiting mints a
-fresh key + credits each time). If a claim site asks for a campaign code, use the
-one your challenge or event gave you.
+The platform meters and authorises three separate credentials, and this project
+uses all three for what they are for:
 
-Put them in `client/.env`:
+| role | credential | authority | how to get one |
+| --- | --- | --- | --- |
+| **tenant** | private key (`0x…`) | registers the contract, creates the KV maps, seeds the policy and the secrets row | the campaign claim page |
+| **user** (data owner) | private key (`0x…`) | signs the member-delegation grant the agent runs under | a second key; one account can hold several |
+| **agent** | opaque token (`t3n_key_<id>.<secret>`) | calls six functions on one contract, with egress to two hosts | `t3n agent create`, then `t3n agent fund` |
+
+Two things we learned the hard way, both worth knowing before you start:
+
+- **The claim page does not mint a second identity.** Visiting it again with the
+  same account returns credentials for the *same* DID — we proved this by
+  authenticating two different private keys and getting an identical DID back.
+  A DID is per account, not per key. If you want a distinct agent identity, mint
+  it through the CLI (below) rather than by re-claiming.
+- **An agent needs its own balance.** An agent DID starts at zero and its calls
+  are metered separately from the tenant's. Provision it, then fund it:
+
+  ```bash
+  t3n org create --name "ExpenseGuard" --env testnet --json                     # → organisationDid
+  t3n agent create --org "$ORG_DID" --name expense-guard --env testnet --json  # → agentDid + token (shown once)
+  t3n agent fund --agent "$AGENT_DID" --amount 2000000000 --note "initial funding" --env testnet
+  ```
+
+  Afterwards, `t3n contract get <canonical-name> --env testnet` reports the
+  registered version — note that it prints the canonical *name* under the label
+  `contract_id`, which is exactly the confusion `BUG-11` describes.
+
+  Do **not** pass `--initial-credits` to `agent create`: it draws on the
+  organisation's pool, which is empty, and fails with an error that names no
+  source (`BUG-12`). `agent create` is not idempotent either — it registers a DID
+  each time, and the agent's bearer token is printed exactly once.
+
+`t3n agent create` prints the bearer token once; capture it straight into `.env`
+without echoing it to a terminal log, and never commit it.
+
+## 2. Configure
+
+```bash
+cd client
+cp .env.example .env && chmod 600 .env
+```
 
 ```dotenv
 T3N_ENVIRONMENT=testnet
-TENANT_API_KEY=...
-AGENT_API_KEY=...
-USER_API_KEY=...
+TENANT_API_KEY=0x...            # tenant private key
+USER_API_KEY=0x...              # the key that signs the delegation grant
+ORG_DID=did:t3n:...
+AGENT_DID=did:t3n:...
+AGENT_KEY_ID=t3n_key_...
+AGENT_INVOKE_KEY=t3n_key_...    # bearer token, printed once at agent create
+CONTRACT_TAIL=expense-guard
+CONTRACT_VERSION=0.1.0
+FX_BASE_CURRENCY=USD
+APPROVAL_WEBHOOK_URL=https://postman-echo.com/post
 ```
 
-`client/.env` is git-ignored. Keys are shown once by the claim page — store them
-before closing the tab.
+`npm run doctor` then checks 19 things — node and SDK versions, the SDK's
+exported surface, the built wasm and its fingerprint, the contract tail and
+version against `docs/INTERFACE.md`, both reachable hosts, and the credentials.
+Its registration-record check is the one to watch: it compares the wasm on disk
+with the one that was registered, so it catches "you rebuilt and forgot to
+re-register".
 
-## 1. Build the contract
+## 3. Build and test the contract
 
 ```bash
 cd contract
-cargo build --target wasm32-wasip2 --release
-ls -l target/wasm32-wasip2/release/z_expense_guard.wasm
+cargo test                                        # 115 native tests + 1 doctest
+cargo build --target wasm32-wasip2 --release      # → 255,734-byte component
+wasm-tools validate target/wasm32-wasip2/release/z_expense_guard.wasm
 ```
 
-Business-logic tests run natively, without a cluster:
+Business logic is tested natively, so the suite runs in under a second without a
+cluster. `cargo test` works here because our `.cargo/config.toml` keeps the
+default target on the host triple and puts the component target behind the `wasm`
+alias; the vendored sample pins `wasm32-wasip2` as the default instead, which
+makes its own `cargo test` try to run a `.wasm` binary (`BUG-09`).
 
-```bash
-cd contract
-cargo test --target x86_64-unknown-linux-gnu
-```
+## 4. Run the flow
 
-Use the explicit `--target`, not a bare `cargo test`: `.cargo/config.toml` pins
-`wasm32-wasip2` so the contract links against the host ABI by default, and a bare
-`cargo test` then tries to execute a `.wasm` test binary. See `docs/BUGLOG.md`
-BUG-09.
-
-## 2. Install the harness
+Each step depends on the one before it, and each authenticates as a different
+identity — run them in order:
 
 ```bash
 cd client
-npm ci
-cp .env.example .env   # then fill in the three keys
-npm run typecheck
+npm run register    # tenant: register the wasm, create 4 maps, seed the policy
+npm run delegate    # data owner: grant the agent 6 functions on 1 contract, 2 hosts
+npm run demo        # agent: the expense flow; writes a transcript
 ```
 
-## 3. Run the whole flow
+**`register` is not idempotent.** It allocates a new numeric `contract_id` on
+every call, and re-registering the same version is refused outright
+("not higher than current"). That numeric id is what the KV map ACLs take, and
+there is no API to read it back afterwards (`BUG-11`), so `register` persists it
+to `client/artifacts/registration.json` and the later steps read it from there.
 
-```bash
-cd client
-npm run demo
-```
+`delegate` resolves the approval webhook host from the live `z:<tid>:secrets`
+row first, falling back to `APPROVAL_WEBHOOK_URL`, and refuses to write a grant
+whose `allowed_hosts` disagree with what the contract will actually call.
 
-The demo is idempotent per step and prints exactly what it did:
+## 5. Read the results
 
-1. connects the tenant session and prints the tenant DID;
-2. registers the contract from `contract/target/wasm32-wasip2/release/` and
-   prints `contract_id`;
-3. creates the three KV maps and grants the contract read/write ACL on each;
-4. connects the user session and records their DID;
-5. grants the user access to the contract functions (including
-   `check-expense`) and the agent its scope;
-6. seeds the approval webhook URL into the secrets map;
-7. submits four claims as the user: one compliant, one over the category limit,
-   one disallowed category, one duplicate of the first;
-8. reads the audit trail back and prints the ledger;
-9. prints the recomputed decision digest for the first claim so a third party
-   can check it against the receipt.
+- **Verdicts** come back as JSON from `check-expense`: `verdict`, `rules[]`,
+  `base_amount`, `fx_rate`, `fx_source`, `ledger_seq`. `rules` carries stable ids
+  (`over_category_limit`, `possible_duplicate`, `fx_unavailable`), never prose.
+- **Ledger** — `get-audit` returns the enclave-side records in host sequence
+  order; `get-audit` with `{"employee_ref": "EMP-7"}` filters to one employee.
+- **Approval round trip** — `request-approval` posts to the echo endpoint in the
+  secrets map and returns the body the endpoint echoed back, so the
+  `{{profile.*}}` substitution is verifiable without a third-party dashboard.
+- **Transcript** — `npm run demo` writes `client/demo-output/<timestamp>-invoke.json`
+  containing every call, its raw response and its classification. That file, not
+  a screenshot, is the primary evidence; `tools/terminal-to-png.py` renders a
+  real terminal capture into an image for the write-up:
 
-Individual steps are also runnable on their own:
+  ```bash
+  script -q -c "npm run demo" /tmp/demo.txt
+  python3 tools/terminal-to-png.py --input /tmp/demo.txt --output docs/evidence/demo.png \
+      --title "npm run demo — agent session against z:<tid>:expense-guard"
+  ```
 
-```bash
-npm run register      # 2 only
-npm run grants        # 4-5 only
-npm run demo:claims   # 7-9 only
-```
+## Failure modes we actually hit
 
-## 4. Read the results
+**`<NAME> is not set` from doctor.** `.env` is missing or still holds the
+placeholder. Doctor stops at the first failure and names it.
 
-- **Verdicts** come back as JSON from `check-expense`.
-- **Ledger**: `get-audit` with `{ "employee_ref": "EMP-7" }` returns the entries
-  in host sequence order.
-- **Policy**: `get-policy` returns the active policy document.
-- **Approval traffic**: the demo posts to the echo endpoint configured in the
-  secrets map and stores the response code in the ledger entry, so the approval
-  round trip is auditable without a third-party dashboard.
+**`contract version is not higher than`** on re-register. Bump
+`CONTRACT_VERSION`, or skip registration and reuse the recorded `contract_id`.
 
-## Troubleshooting
+**`fx_unavailable` in a verdict.** The enclave's egress to `open.er-api.com` is
+not granted. Outbound HTTP is gated by the caller's grant `allowed_hosts` — the
+contract is right to refuse rather than invent a rate, and the demo records the
+rule id so the reason is visible.
 
-**`InsufficientCreditError` on any agent call.** The agent identity has no
-credits. Claim a fresh key for the agent and update `AGENT_API_KEY`. Do not reuse
-the tenant key.
+**`host/http.egress_denied`.** Same cause, one layer down: the host rejected the
+call before the contract saw it.
 
-**The contract registers but every call fails to instantiate.** The cluster's
-linker world does not provide an interface the wasm imports. Check that the
-`host:interfaces/...@X.Y.Z` imports in `contract/wit/world.wit` match the
-versions under `contract/wit/deps/`. See `docs/BUGLOG.md` BUG-02.
+**`AccessDenied` on a KV read or write.** The map's ACL does not include the
+contract's current numeric id. If you re-registered without updating the ACLs,
+that is `BUG-11`.
 
-**Egress to the FX or approval host is denied.** Outbound HTTP is gated by the
-contract's allow-list. Add the host to the grant that the demo configures, and
-keep the hosts in `client/src/config.ts` and the grant in sync.
+**`InsufficientCreditError` as the agent.** The agent DID's balance is separate
+from the tenant's. `t3n agent fund` it; do not reuse the tenant key.
 
-**`PlaceholderUnknown` on the approval post.** The calling user's profile is
-missing a field the contract asked for. Either have the user fill that profile
-field, or run the claim with approval posting disabled (`use_profile: false`) —
-the contract will then post the non-PII payload only.
+**Component rejected at registration.** The WIT import set drifted from the host
+ABI. Compare with `wasm-tools component wit` against a known-good component.
 
-**`cargo test` fails with "could not execute process ... wasm".** Pass
-`--target x86_64-unknown-linux-gnu` (see step 1).
+## Re-running and tearing down
 
-## Tearing down
-
-Maps and contracts are scoped to the tenant DID. Re-registering the contract
-creates a new `contract_id` and the old ACL entries go stale — the demo writes
-the current id to `client/.state.json` so re-runs reuse it instead of orphaning
-grants. See `docs/BUGLOG.md` (contract-id retrieval) for the platform-side gap.
+Nothing is mutated in place except the tenant's namespace, so a clean re-run is
+either (a) register the same tail with a higher `CONTRACT_VERSION` and re-run
+`delegate` + `demo`, which is what we did while iterating, or (b) start with a
+fresh org and agent (`t3n org create` / `t3n agent create`) and point `.env` at
+them. Maps are scoped to the tenant DID; delete the four `z:<tid>:*` maps when
+you are done with them.

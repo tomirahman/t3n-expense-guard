@@ -270,6 +270,20 @@ it: "there is currently no API to fetch a tail's current `contract_id` after
 re-registering". The docs' mitigation is procedural — keep your own record — but
 the node already hands you the id at registration, so it plainly has it.
 
+The CLI does not close the gap, it widens it: `t3n contract get` exists, but it
+labels the canonical *name* with the field name the ACLs use for the number:
+
+```
+$ t3n contract get z:f817f49837375d99b44cbf8907becc154f2a5fc9:expense-guard --env testnet
+contract_id      z:f817f49837375d99b44cbf8907becc154f2a5fc9:expense-guard
+current_version  0.1.0
+```
+
+(It also rejects the short tail — `t3n contract get expense-guard` → `expense-guard
+is not registered`.) So the only two identifiers are still the string and the
+number, the command for reading a contract prints the string under the number's
+name, and the number remains write-only.
+
 The failure is quiet and misattributed. Re-register the same tail, keep the old
 ACLs, and the contract's own `kv-store` call is denied *inside the enclave* —
 `AccessDenied` is the documented symptom of an ACL miss (`create-kv-maps.md:18`):
@@ -341,22 +355,101 @@ left behind — so the damage is only the confusing error.
 fund`), or drop it and tell the user to call `agent fund` — and in both cases say
 *whose* balance is being debited in the error message.
 
-_(Remaining live-run defects are added below as the deployment run surfaces them —
-see `docs/RUNBOOK.md`.)_
+## BUG-13 — the CLI cannot read an agent's credit balance, only a private key's
+
+`token balance` is the command you reach for when a metered call fails, and it
+accepts a private key only:
+
+```
+$ T3N_API_KEY=t3n_key_…9b52 t3n token balance --env testnet
+error: Invalid Ethereum private key (INVALID_ARGUMENT): t3n_…9b52 [redacted]
+```
+
+An agent's credential *is* a `t3n_key_…` bearer token — the platform issues no
+private key for it — and agent calls are metered against the agent's own balance,
+separately from the tenant's. So the one identity whose balance you can be
+blocked by is the one identity the CLI will not look up. The only feedback on an
+agent's balance is the 403 at call time:
+
+```
+HTTP 403 {"error":"InsufficientCredit (account=a13591f5…, required=10000000000,
+available=0)","code":"forbidden","request_id":"…"}
+```
+
+`required=10000000000` here is a **reserve**, not the price of the call: our agent
+was funded with 2e9, served several calls, then began failing with
+`available=0`; after funding 1e10 the same call succeeded. Nothing in the docs,
+the help text or the error explains that distinction, and a *read* of the audit
+ledger is not obviously the most expensive thing in it.
+
+**Fix:** let the CLI read a keyed identity's balance from its bearer token, or
+accept `--agent <did>` on `token balance` for an org admin. Either one turns a
+runtime 403 into a preflight check.
+
+## BUG-14 — the delegation write accepts a row the resolver ignores, and the read-back confirms it
+
+This cost us more time than anything else in this log, because every signal said
+the write had worked.
+
+`BoundGrant` declares `function: string` — one function per row — and says so
+explicitly: *"One function per grant: a client authorising a grantee on several
+functions posts several rows, each carrying the full `scopes` that function
+needs — there is no more multi-function fan-out on the wire."*
+
+Our first client wrote the legacy-looking shape instead, one row per grantee:
+
+```json
+{ "grantee": "did:t3n:a13591f5…",
+  "contract_id": "z:f817f498…:expense-guard",
+  "functions": ["health", "set-policy", "get-policy", "check-expense",
+                "request-approval", "get-audit"],
+  "allowed_hosts": ["open.er-api.com"] }
+```
+
+The platform accepted it. `member-delegation-update` returned success, and
+`member-delegation-get` echoed the document back including `functions` *and*
+`allowed_hosts`, so our own verification step — "stored functions == contract
+surface", "stored allowed_hosts == the host the contract dials" — passed on every
+run. The document is stored without shape validation, so a read-back proves only
+that the node remembers what it was given.
+
+The resolver keys on `(grantee, contract_id, function)`, matched no row at all,
+and resolved an **empty** egress allowlist. The failure surfaced three layers
+away, inside the enclave, as:
+
+```
+fx: live lookup failed: host/http.egress_denied: egress host(s)
+    [open.er-api.com] not in the resolved allowlist []
+    (exact string match, so scheme and port must agree)
+```
+
+The empty `[]` is the tell: the document we could read contained the host, and
+the allowlist the host consulted did not. Nothing in that error — and nothing in
+the accepting write or the confirming read — points at the delegation shape.
+
+**Fix:** validate the row on write. Reject unknown fields, and treat `functions`
+as the legacy form that must be fanned out; the SDK already exports `fanOutGrant`
+and `mergeGrants` for exactly that, and its own JSDoc describes the fan-out. A
+warning on an unrecognised field turns an enclave-side mystery into a one-line
+client error. If opaque storage is deliberate, then `member-delegation-get` should
+not be described as a way to verify a write.
 
 ## How we'd prioritise the fixes
 
 1. **BUG-09** — blocks the documented first command.
 2. **BUG-01** — blocks the documented first paste.
-3. **BUG-02** — silent path to a non-loadable component.
-4. **BUG-11** — the numeric id that map ACLs need cannot be read back, so
+3. **BUG-14** — a write that is accepted, echoed back and ignored: every signal
+   says success, and the failure lands inside the enclave as an egress denial.
+   Cheapest to fix, dearest to diagnose.
+4. **BUG-02** — silent path to a non-loadable component.
+5. **BUG-11** — the numeric id that map ACLs need cannot be read back, so
    re-registering a tail silently orphans every ACL that used the old id, and the
    symptom (`AccessDenied`) points the builder at the wrong layer.
-5. **BUG-03** — costs the platform its differentiator: builders cannot discover
+6. **BUG-03** — costs the platform its differentiator: builders cannot discover
    `scan` or `set-claims-digest`, so nobody ships offline-verifiable receipts.
-6. **BUG-10** — the client that talks to the enclave is published obfuscated,
+7. **BUG-10** — the client that talks to the enclave is published obfuscated,
    with no source maps, while the source repo is private; that is the opposite of
    the verifiability T3N sells.
-7. **BUG-04, BUG-05** — tooling friction with no workaround.
-8. **BUG-06, BUG-07, BUG-08, BUG-12** — vocabulary drift and one undocumented,
-   mis-sourced CLI flag.
+8. **BUG-04, BUG-05** — tooling friction with no workaround.
+9. **BUG-06, BUG-07, BUG-08, BUG-12, BUG-13** — vocabulary drift, one
+   undocumented and mis-sourced CLI flag, and a balance the CLI cannot look up.
