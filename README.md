@@ -70,7 +70,11 @@ contract/            Rust TEE contract (own crate, compiled to a WASM component)
   wit/deps/            vendored host ABI packages (must match the cluster)
   src/                 policy.rs, fx.rs, ledger.rs, approval.rs, maps.rs, errors.rs
 client/              Node/TypeScript harness (separate project, as the docs require)
-  src/01-register-contract.ts … src/04-demo.ts
+  src/doctor.ts        preflight: env, SDK, wasm, egress hosts, acting identity
+  src/deploy.ts        register the contract, create the maps, seed policy + secrets
+  src/grant.ts         write the data owner's delegation grant
+  src/invoke.ts        the 8-step agent session, writes a transcript
+  src/lib/             env, session, interface and artifact helpers
 docs/INTERFACE.md    frozen interface: functions, JSON payloads, maps, rule ids
 docs/ARCHITECTURE.md threat model and data flow
 docs/BUGLOG.md       every defect, doc mismatch and rough edge found while building
