@@ -63,6 +63,16 @@ outside.
 | tenant DID | `did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9` |
 | org / agent DID | `did:t3n:85c188ff697c5c7aae96b495bdc8c087dcdae4c9` / `did:t3n:a13591f52ba98b9068801c80719e56d03c74ee81` |
 
+## Screenshots
+
+`npm run doctor` — all 21 preflight checks, run against the live cluster:
+
+![doctor — 21 preflight checks before anything is registered](evidence/doctor.png)
+
+`npm run demo` — one full agent session, 8 of 8 steps green:
+
+![demo — 8 of 8 steps green](evidence/demo.png)
+
 **The demo transcript is the evidence**: `client/demo-output/<TIMESTAMP>-invoke.json` is the raw output of `npm run demo` — a real agent session, against the registered contract, on testnet. Every step records what was asked, what came back, and how it was classified.
 
 ## What we found while building it

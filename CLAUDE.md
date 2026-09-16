@@ -31,6 +31,9 @@ npm run seed                                      # tenant: re-seed the secrets 
 npm run delegate                                  # data owner: grant the agent its scope (6 functions)
 npm run demo                                      # agent: the expense flow + transcript (8 checks)
 npm run typecheck                                 # tsc --noEmit
+
+# submission document (optional — needs pandoc, python-docx, Pillow)
+python3 tools/build-submission-docx.py            # docs/SUBMISSION.md -> docs/SUBMISSION.docx, images page-sized
 ```
 
 ## Conventions
