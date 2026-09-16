@@ -58,7 +58,7 @@ outside.
 | wasm | 255,734 bytes, sha256 `5dd3a964bc2e0b3f…` |
 | component validation | `wasm-tools validate` OK; import set identical to the vendor sample |
 | native tests | 115 unit tests + 1 doctest, green |
-| live demo | 8 of 8 steps green, run twice back to back — health, delegation, policy, FX-converted verdict, duplicate, threshold, rejection, ledger read-back |
+| live demo | 8 of 8 steps green on four consecutive runs, one of them via the documented `npm run demo` — health, delegation, policy, FX-converted verdict, duplicate, threshold, rejection, ledger read-back |
 | outbound HTTP from the enclave | real: `fx_source: open.er-api.com`, `fx_rate: 1.153788` for a EUR claim |
 | tenant DID | `did:t3n:f817f49837375d99b44cbf8907becc154f2a5fc9` |
 | org / agent DID | `did:t3n:85c188ff697c5c7aae96b495bdc8c087dcdae4c9` / `did:t3n:a13591f52ba98b9068801c80719e56d03c74ee81` |
@@ -81,3 +81,10 @@ npm run delegate && npm run demo
 ```
 
 `docs/RUNBOOK.md` has the full sequence, the expected output and the failure modes; `docs/ARCHITECTURE.md` explains why the boundaries sit where they do; `docs/INTERFACE.md` is the frozen contract interface.
+
+## Running it after the challenge
+
+`docs/RUNBOOK.md` is the operator's document: the deploy order, the expected output at every step, and the failure modes we actually hit. Nothing in the running system is bound to our accounts, so either path works:
+
+- **We keep running it.** The tenant org, the agent and the registration stay ours; cost is metered per call through the host's `token` capability, and the harness is one `npm ci` away from working.
+- **Handover to Terminal 3.** The transferable surface is deliberately small — a wasm artifact, one registration call, four KV maps, one delegation document, one secrets row. A new operator needs a tenant with credits, an agent, and the values listed in `client/.env.example`, which documents every variable including the two traps: `AGENT_INVOKE_KEY` is a bearer token printed exactly once at agent creation, and `PII_DID` must name the delegator or egress resolves to an empty allowlist (`BUG-14`). `deploy.ts` recreates the contract, the maps and the policy; `deploy.ts --seed-only` re-seeds the secrets row; `grant.ts` rewrites the delegation idempotently; `npm run doctor` names anything still missing. `AGENTS.md` carries the same contract for whoever picks the repository up next.
