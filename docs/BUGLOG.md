@@ -249,6 +249,77 @@ stack traces without exposing anything the obfuscator was hiding from a
 casual reader — `dist/index.d.ts` (308 KB) already documents the whole public
 API surface.
 
+## BUG-11 — a contract has two identifiers, only one is documented, and only one is derivable
+
+The platform identifies a contract by a **canonical name** and by a **numeric
+id**, and different call sites require different ones. The shipped type
+declarations make this explicit; the prose docs never mention it:
+
+```ts
+// dist/index.d.ts:6384 — map ACLs
+type WriterSet = "all" | { only: number[] };
+type ReaderSet = "all" | { only: number[] };
+```
+
+```ts
+// dist/index.d.ts:1215 — delegation grants
+/** Target contract id (canonical name, e.g. `"tee:z-payroll/contracts"`), or `"*"`. */
+contract_id: string;
+```
+
+Meanwhile the KV-map tip writes `writers: { only: [contractId] }` without saying
+which of the two `contractId` means, and the registration walkthrough presents
+`z:<tenant>:<tail>` as *the* contract id. The numeric id is **not derivable**
+from the canonical name: it only ever appears in the registration response. A
+builder who follows the docs in order has to guess at step two, and guessing
+wrong produces a map whose ACL names a contract that does not exist — the
+contract's own KV write is then denied, from inside the enclave, with no hint
+that the cause was a type confusion in the client.
+
+**Fix:** document the split in one place ("the numeric id is what ACLs take, the
+canonical name is what grants and `contract_id` arguments take"), or accept the
+canonical name everywhere and resolve it host-side. The two identifiers also
+appear as `contract_id` in the activity log, where the only example given —
+`tee:user/contracts` — is a third, system-namespace form that appears nowhere in
+the registration flow.
+
+## BUG-12 — `--initial-credits` fails on a fresh organisation with `available=0`, and names no source
+
+Provisioning an org agent with the CLI flag that the help text advertises:
+
+```
+$ t3n org create --name "ExpenseGuard" --env testnet --json
+{ "organisationDid": "did:t3n:85c188ff…", "name": "ExpenseGuard" }
+
+$ t3n agent create --org did:t3n:85c188ff… --name "expense-guard" \
+    --initial-credits 2000000000 --env testnet --json
+Error: agent-credit-transfer: insufficient credit (available=0, requested=2000000000)
+```
+
+The calling identity's own balance at that moment was **20,000,000,000**
+(`t3n token balance`), so the flag is not drawing on the caller — it draws on a
+balance that is empty on a brand-new organisation and that no documented command
+can fund. `--initial-credits` appears in the CLI help and in **none** of the 48
+documented pages; the documented funding command is explicit that it does the
+thing the flag appears to promise:
+
+```
+agent fund --agent <did> --amount <n> [--note <text>] [--from-org <did>]
+                       fund an agent's credit balance so it can act;
+                       defaults to your own balance          (write)
+```
+
+**Reproduction:** `t3n agent create --org <fresh-org> --name x --initial-credits 1`.
+The call is atomic — the outer transaction is rolled back, no orphan agent is
+left behind — so the damage is only the confusing error.
+
+**Workaround, and the path we shipped on:** omit the flag, then
+`t3n agent fund --agent <did> --amount 2000000000` from the caller's balance.
+
+**Fix:** either make the flag fund from the caller's balance (matching `agent
+fund`), or drop it and tell the user to call `agent fund` — and in both cases say
+*whose* balance is being debited in the error message.
+
 _(Remaining live-run defects are added below as the deployment run surfaces them —
 see `docs/RUNBOOK.md`.)_
 
@@ -256,8 +327,15 @@ see `docs/RUNBOOK.md`.)_
 
 1. **BUG-09** — blocks the documented first command.
 2. **BUG-01** — blocks the documented first paste.
-3. **BUG-03** — costs the platform its differentiator: builders cannot discover
+3. **BUG-02** — silent path to a non-loadable component.
+4. **BUG-11** — the split between the two contract identifiers is unresolvable
+   from the docs, and getting it wrong fails *inside* the enclave as an unrelated
+   `AccessDenied`, so the builder debugs the wrong layer.
+5. **BUG-03** — costs the platform its differentiator: builders cannot discover
    `scan` or `set-claims-digest`, so nobody ships offline-verifiable receipts.
-4. **BUG-02** — silent path to a non-loadable component.
-5. **BUG-04, BUG-05** — tooling friction with no workaround.
-6. **BUG-06, BUG-07, BUG-08** — vocabulary and naming drift.
+6. **BUG-10** — the client that talks to the enclave is published obfuscated,
+   with no source maps, while the source repo is private; that is the opposite of
+   the verifiability T3N sells.
+7. **BUG-04, BUG-05** — tooling friction with no workaround.
+8. **BUG-06, BUG-07, BUG-08, BUG-12** — vocabulary drift and one undocumented,
+   mis-sourced CLI flag.
